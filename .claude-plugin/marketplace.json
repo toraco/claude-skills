@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "toraco-skills",
+  "description": "toraco の共有 Claude Code skills。ローカル・クラウドセッションの両方で使えるよう plugin marketplace として公開している",
+  "owner": {
+    "name": "toraco",
+    "url": "https://github.com/toraco"
+  },
+  "plugins": [
+    {
+      "name": "toraco",
+      "source": "./plugins/toraco",
+      "category": "development"
+    }
+  ]
+}
