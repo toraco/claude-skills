@@ -283,7 +283,7 @@ Step 2 で集まった全 issue について、各 issue ごとに `Agent` ツ�
 - 🟢 参考扱い（score < 80）の一覧
 - 最終の test / lint / build dryrun の結果
 - 注意: **commit / push は行わない**。必要であればユーザーに `/commit` や
-  `/create-pr` skill の利用を案内する
+  `/ship` skill の利用を案内する
 
 ## Notes
 

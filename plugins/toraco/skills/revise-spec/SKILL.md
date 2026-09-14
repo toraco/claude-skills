@@ -26,7 +26,7 @@ allowed-tools: Bash(git symbolic-ref:*), Bash(git log:*), Bash(git diff:*), Bash
 - 仕様を新規作成するとき → `make-plan`
 - コードのバグ修正のみ（仕様はそのまま） → `bugfix` / `local-review`
 - agent 向け指示プロンプト（skill / slash command）の品質改善 → `empirical-prompt-tuning`
-- コミット / PR 作成 → `/commit` / `/create-pr`
+- コミット / PR 作成 → `/commit` / `/ship`
 
 ## 前提
 

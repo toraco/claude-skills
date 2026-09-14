@@ -11,7 +11,7 @@ description: 現在の変更を適切なブランチに載せ、commit → push 
 
 作業済みの変更を「正しいブランチで commit され、push され、PR になっている」状態まで一括で持っていく。
 
-これまで「checkout branch, commit, push and create PR」とフリーテキストで依頼していた定型フローの置き換え。`commit` skill と `create-pr` skill の合成 + 前段のブランチ退避判定。
+これまで「checkout branch, commit, push and create PR」とフリーテキストで依頼していた定型フローの置き換え。`commit` skill + push + PR 作成の合成 + 前段のブランチ退避判定。
 
 ## いつ使うか
 
@@ -22,7 +22,6 @@ description: 現在の変更を適切なブランチに載せ、commit → push 
 使わない場面:
 
 - commit だけしたい → `commit`
-- 既存ブランチを push して PR を作るだけ（ブランチ判定・commit 不要）→ `create-pr`
 
 ## 引数
 
@@ -63,7 +62,7 @@ description: 現在の変更を適切なブランチに載せ、commit → push 
 `--no-pr` 指定時はスキップ。
 
 - `gh pr view --json url,title,body,isDraft` で既存 PR を確認
-- **PR がない場合**: `create-pr` skill と同じ規約で作成する
+- **PR がない場合**: 次の規約で作成する
   - `.github/PULL_REQUEST_TEMPLATE.md` があればテンプレートに沿って body を構成する
   - title は 70 文字以内でブランチの commit 群から生成
   - body には `## Summary`（変更点の箇条書き）と `## Test plan`（動作確認手順のチェックリスト）を含める（テンプレートがある場合はその構成を優先）
@@ -94,5 +93,4 @@ description: 現在の変更を適切なブランチに載せ、commit → push 
 ## 関連
 
 - `commit` — commit 単体。メッセージ規約はこちらに従う
-- `create-pr` — push + PR 作成単体。PR 規約はこちらに従う
 - `auto-fix-review` — PR 作成後のレビュー対応ループはこちら
