@@ -20,13 +20,13 @@ claude-skills/
 
 | skill | 用途 |
 |---|---|
-| `commit` / `create-pr` / `ship` | コミット・PR 作成・ブランチ退避 |
-| `check` / `bugfix` / `similarity-ts` | テスト/リント/ビルド・バグ修正・重複検出 |
+| `commit` / `ship` | コミット・PR 作成・ブランチ退避 |
+| `check` / `bugfix` | テスト/リント/ビルド・バグ修正 |
 | `local-review` / `fix-review` / `auto-fix-review` | レビュー生成と指摘の反映 |
 | `revise-spec` / `revise-tests` | 仕様書・テストの見直し |
-| `make-plan` / `grilling` / `empirical-prompt-tuning` | 計画立案・壁打ち・プロンプト改善 |
-| `file-issue` / `triage-issues` / `pr-triage` / `solve-issues` | issue 起票・棚卸し・自動実装 |
-| `release` / `fix-ci` / `setup-renovate` | リリース・CI 修復・Renovate 導入 |
+| `make-plan` / `grilling` | 計画立案・壁打ち |
+| `file-issue` | issue 起票 |
+| `release` / `fix-ci` | リリース・CI 修復 |
 
 ## 使い方
 
@@ -78,5 +78,5 @@ claude plugin list | grep -q "toraco@toraco-skills" || \
 ```
 claude plugin validate .
 claude plugin marketplace add toraco/claude-skills && claude plugin install toraco@toraco-skills
-claude plugin details toraco   # Skills (21) と出れば OK
+claude plugin details toraco   # Skills (14) と出れば OK
 ```

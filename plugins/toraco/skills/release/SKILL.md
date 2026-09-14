@@ -25,7 +25,7 @@ description: 統合ブランチ(既定 develop)の内容を本番ブランチ(�
 
 使わない場面:
 
-- 機能ブランチ → develop の通常 PR → `ship` / `create-pr`
+- 機能ブランチ → develop の通常 PR → `ship`
 - リリース PR の CI が落ちた原因調査 → `fix-ci`（本 skill の Step 5 から呼ぶ）
 - デプロイ後のリモート環境での機能動作確認そのもの → リリースの範囲外。別途依頼する
 
