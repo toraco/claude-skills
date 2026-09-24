@@ -1,11 +1,11 @@
 ---
 name: auto-fix-review
-description: PR の Claude Code Review を待ち、High (🔴) / Medium (🟡) の指摘がなくなるまで /fix-review --yes を自動反復実行する
+description: PR の Claude Code Review を待ち（自動レビュー未設定のリポジトリでは @claude メンションでレビューを依頼し）、High (🔴) / Medium (🟡) の指摘がなくなるまで /fix-review --yes を自動反復実行する
 ---
 
 # Auto Fix Review Loop: $ARGUMENTS
 
-**使い方**: `/auto-fix-review [pr-number] [--max-iterations N] [--wait-minutes N] [--max-reruns N]`
+**使い方**: `/auto-fix-review [pr-number] [--mode auto|mention] [--max-iterations N] [--wait-minutes N] [--max-reruns N]`
 
 ## Goal
 
@@ -26,6 +26,11 @@ Claude Code Review が PR に返した **High severity**（`### 🔴 バグ` ま
 到着しないため、本スキルは待機タイムアウト時に workflow の状態を確認し、必要なら **rerun** して
 再投稿を促す（Step 1-3。rerun は 1 回のレビュー待機につき最大 `--max-reruns` 回）。
 
+加えて、リポジトリに **Claude による自動レビュー（PR の push で自動起動するレビュー）が設定されていない**
+場合でも、`@claude` メンションに応答する workflow があれば本スキルが使える。この **mention モード**では、
+本スキル自身が PR に `@claude` メンション付きのレビュー依頼コメントを投稿し、「レビュー依頼 → レビュー待機 →
+/fix-review --yes 実行 → push → 再レビュー依頼」を繰り返す（Step 0-6 でモードを判定し、Step 1-R で依頼する）。
+
 これは `/goal` 的な完了条件ドリブンのループであり、本スキルが起動された時点で
 ユーザー追加入力なしに完了条件まで走り切ることが期待される。
 
@@ -34,10 +39,14 @@ Claude Code Review が PR に返した **High severity**（`### 🔴 バグ` ま
 `$ARGUMENTS` を以下のように解釈する（順不同・全て省略可）。
 
 - `pr-number`: 数値トークン1個。対象 PR 番号（省略時は current branch から `gh pr view` で検出）
+- `--mode auto|mention`: レビュー起動方式を明示する（省略時は Step 0-6 で自動判定）
+  - `auto`: push を契機に自動でレビューが投稿されるのを待つ（従来の挙動）
+  - `mention`: 本スキルが `@claude` メンション付きコメントでレビューを依頼し、その応答を待つ
 - `--max-iterations N`: 修正サイクルの最大反復回数（default 5）
 - `--wait-minutes N`: 各レビュー待機の最大分数（default 10）
 - `--max-reruns N`: 1 回のレビュー待機あたりの review workflow 再実行回数の上限（default 2。
-  workflow の初回実行と合わせて最大 3 回まで実行されることになる）。`0` を指定すると rerun 機構を無効化する
+  workflow の初回実行と合わせて最大 3 回まで実行されることになる）。`0` を指定すると rerun 機構を無効化する。
+  mention モードでは「レビュー依頼コメントの再投稿」回数の上限として扱う
 
 ## Completion conditions (いずれか満たした時点で終了)
 
@@ -50,7 +59,9 @@ Claude Code Review が PR に返した **High severity**（`### 🔴 バグ` ま
 - **D. ERROR**: `/fix-review` がエラーで失敗、push に失敗、または `gh run rerun` の実行自体に失敗
 - **E. NOT_CONVERGED**: Safety notes の収束チェックで「同一 issue 集合が 2 回連続検出」され、自動継続を停止
 - **F. REVIEW_MISSING**: review workflow は完了しているのにレビューコメントが投稿されず、
-  rerun 上限（`--max-reruns`）に到達した
+  rerun 上限（`--max-reruns`）に到達した（mention モードでは依頼の再投稿上限に到達した）
+- **G. NO_REVIEWER**: 自動レビューも `@claude` メンション応答も利用できないと判断した
+  （Step 0-6 で `REVIEW_MODE = none` となった場合）
 
 ## Steps (obey strictly)
 
@@ -77,14 +88,40 @@ Claude Code Review が PR に返した **High severity**（`### 🔴 バグ` ま
    形式的に取得しておくこと（後続パスとの整合性のため）。
 5. `rerun_count = 0` で初期化する（**1 回のレビュー待機あたり**の rerun 回数。Step 4 で反復ごとにリセットする）。
    全反復を通じた累計は `rerun_total` として別に数え、Step 5 のレポートに出す。
-6. **review workflow を特定する**（Step 1-3 の rerun 判定で使う）。優先順に:
-   1. `grep -rl "anthropics/claude-code-action" .github/workflows/ 2>/dev/null` でヒットした workflow
-      ファイルのうち、`pull_request` トリガを持つもの。複数該当する場合はファイル名または `name:` に
-      `review` を含むものを優先する。特定できたら `name:` の値を `REVIEW_WORKFLOW_NAME` として保持する
-   2. 上で決められない場合は、Step 1-3 で `gh run list --commit <head-sha>` の `workflowName` に
-      `claude` を含む最新 run にフォールバックする
-   3. どちらでも特定できない場合は **rerun 機構を無効化**し（従来どおり待機タイムアウトで C に倒す）、
-      その旨を Step 5 のレポートに明記する
+   mention モードで投稿したレビュー依頼コメントの累計は `requests_total = 0` から数える。
+6. **レビューモード（`REVIEW_MODE`）と review workflow を特定する**（Step 1 の分岐と Step 1-3 の rerun 判定で使う）。
+   まず `grep -rl "anthropics/claude-code-action" .github/workflows/ 2>/dev/null` で Claude 系 workflow を列挙し、
+   各ファイルの `on:` 配下のトリガ名を確認する。トリガ名は**キー名の完全一致**で判定すること
+   （`pull_request_review` / `pull_request_review_comment` は `pull_request` とは別物。部分一致で拾わない）。
+
+   1. `--mode` が指定されていればそれを `REVIEW_MODE` とする（自動判定より優先）。
+      ただし mention を指定したのに下記 3. の mention workflow が見つからない場合も、そのまま mention で進めてよい
+      （Workflow を使わない Claude のレビュー機能がメンションに応答するケースがあるため）。
+      このとき `MENTION_WORKFLOW_NAME` は未特定として扱う
+   2. **auto 判定**: `pull_request` / `pull_request_target` トリガを持つ workflow がある → `REVIEW_MODE = auto`。
+      複数該当する場合はファイル名または `name:` に `review` を含むものを優先する。
+      `name:` の値を `REVIEW_WORKFLOW_NAME` として保持する
+   3. **mention 判定**: auto に該当する workflow が無く、`issue_comment`（または `pull_request_review_comment`）
+      トリガを持つ workflow がある → `REVIEW_MODE = mention`。
+      - `name:` の値を `MENTION_WORKFLOW_NAME` として保持する
+      - トリガ文言を `TRIGGER_PHRASE` として保持する: workflow の `with:` に `trigger_phrase:` があればその値、
+        無ければ既定の `@claude`
+      - workflow の `if:` 条件がメンション投稿者を絞っている場合（`author_association` / 特定ユーザー等）は、
+        `gh api user --jq .login` で得た自分がその条件を満たすか確認する。満たさなければ **G (NO_REVIEWER)**
+   4. **workflow ファイルが 1 件も見つからない**場合: Actions を使わない Claude のレビュー機能で自動レビューが
+      設定されている可能性があるため、いったん `REVIEW_MODE = auto` として開始し、`mention_fallback = true` とする
+      （Step 1-3 で rerun 対象の run が見つからず C に倒れる場面で、1 回だけ mention モードに切り替えて依頼を投稿する）
+   5. Claude 系 workflow はあるが auto / mention のどちらにも該当しない（`workflow_dispatch` のみ等）
+      → `REVIEW_MODE = none` として **G (NO_REVIEWER)** で終了する
+
+   `REVIEW_MODE == auto` で `REVIEW_WORKFLOW_NAME` を決められなかった場合は、Step 1-3 で
+   `gh run list --commit <head-sha>` の `workflowName` に `claude` を含む最新 run にフォールバックする。
+   それでも特定できない場合は **rerun 機構を無効化**し（待機タイムアウトで C に倒す。`mention_fallback` を除く）、
+   その旨を Step 5 のレポートに明記する。
+7. `REVIEW_MODE == mention` の場合、`REVIEWER_LOGIN = "claude"` を前提とする（`/fix-review` が `author.login == "claude"`
+   のコメントだけを読むため）。レビュー応答が別の login（`github-actions` 等）で投稿された場合（Step 1-3 の mention 手順 6 で検出）は、
+   `/fix-review` がそれを読めないので **D (ERROR)** で終了し、workflow が Claude GitHub App の token で
+   投稿するよう設定されているか確認を促す。
 
 ### Step 1 (loop entry): 最新レビュー取得
 
@@ -101,12 +138,65 @@ Claude Code Review が PR に返した **High severity**（`### 🔴 バグ` ま
 
 - もし `iteration == 0` かつ既存レビュー（集約コメントまたは review thread のいずれか）があれば、
   それを今回の評価対象として Step 2 へ進む。
-- それ以外（push 直後の待機ターン、および初回でまだレビューが 1 件も無いケース）は Step 1-2 の待機ループへ進む。
+  - ただし `REVIEW_MODE == mention` の場合は、既存レビューが **PR の head commit より新しい**ときだけ評価対象とする
+    （mention モードでは push ごとにレビューが走らないため、古いコミットに対するレビューが残っていることが多い）。
+    head commit の時刻は `gh pr view <pr> --json commits --jq '.commits | last | .committedDate'` で取得し、
+    既存レビューの時刻（Step 0-4 の `baseline_ts`）と比較する。古ければ既存レビューは無いものとして次へ進む。
+- それ以外（push 直後の待機ターン、および初回でまだレビューが 1 件も無いケース）は:
+  - `REVIEW_MODE == auto` → Step 1-2 の待機ループへ進む
+  - `REVIEW_MODE == mention` → Step 1-R でレビューを依頼してから Step 1-2 へ進む
 
 注: jq の `last` で最新の Claude レビューを取得しているので、既存レビューが古い場合でも
 「現時点での最新評価」とみなして問題ない（過去の解消済み issue が紛れ込む心配はない）。
 review thread 側は `/fix-review` が対応済みスレッドを Resolve するため、
 未解決として残っているものだけが未対応の指摘である。
+
+#### Step 1-R: @claude メンションでレビューを依頼する（mention モードのみ）
+
+自動レビューが設定されていないリポジトリでは、本スキルがレビュー依頼コメントを投稿する。
+`REVIEW_MODE == auto` のときはこの Step を実行しない。
+
+1. 以下の本文でコメントを投稿する（`<TRIGGER_PHRASE>` は Step 0-6 で特定した値。既定 `@claude`）。
+   出力フォーマットを `/fix-review` Step 2-1 の解析ルールに合わせるよう明示し、レビュアーにコードを
+   変更させない（mention 応答の workflow は commit / push できる権限を持つことが多いため）:
+   ````bash
+   gh pr comment <pr> --body-file - <<'EOF'
+   <TRIGGER_PHRASE> この PR の差分全体をレビューしてください。
+
+   - **レビューのみ**を行い、コードの変更・commit・push・ブランチ作成は一切しないでください。
+   - 結果はこのコメントへの返信として、次のフォーマットで出力してください。該当する指摘が 1 件も無い
+     重大度の見出しは**出力しない**でください（見出しの有無で指摘の有無を判定しています）。
+
+   ```
+   ### 🔴 バグ
+   #### 1. <指摘タイトル>
+   **ファイル:** `path/to/file.ext:<line>`
+   <問題の説明と修正案>
+
+   ### 🟡 設計上の問題
+   #### 2. <指摘タイトル>
+   ...
+
+   ### 🟢 指摘・改善提案
+   #### 3. <指摘タイトル>
+   ...
+   ```
+
+   指摘が 1 件も無い場合は、`### ✅ 指摘なし` とだけ出力してください。
+   EOF
+   ````
+   - 2 回目以降の依頼（Step 4 からの再依頼、Step 1-3 からの再投稿）では、トリガ文言の直後に
+     「前回のレビュー以降に指摘を修正して push しました。最新の差分全体を改めてレビューしてください。」と添える
+     （コメントはトリガ文言で始めること。Step 1-R-2 の特定と workflow の起動条件がそれに依存する）。
+     前回の指摘の再掲・既に解消済みの指摘の再報告は不要である旨も書いてよい
+   - 投稿に失敗した場合は **D (ERROR)** で終了する
+2. 投稿したコメントの `createdAt` を GitHub から取得し `request_ts` とする:
+   ```bash
+   REQUEST_TS=$(gh pr view <pr> --json comments \
+     --jq '[.comments[] | select(.body | startswith("<TRIGGER_PHRASE>"))] | last | .createdAt')
+   ```
+   `baseline_ts = max(baseline_ts, request_ts)` に更新する（依頼より前のコメントを新規レビューと誤認しないため）。
+3. `requests_total += 1`（Step 5 のレポート用）。Step 1-2 へ進む。
 
 #### Step 1-2: 待機ループ
 
@@ -115,6 +205,19 @@ review thread 側は `/fix-review` が対応済みスレッドを Resolve する
 
 - 集約コメントの `updatedAt > baseline_ts`、または
 - `claude` 発の review comment の `created_at` の最大値 `> baseline_ts`
+
+**mention モードの追加条件**: メンション応答は「作業中」を示す進捗コメントを先に投稿し、完了時に同じコメントを
+書き換える形式であることが多い。途中経過を最終レビューと誤認しないよう、上記に加えて次の**いずれか**を満たすまで待つ:
+
+- `MENTION_WORKFLOW_NAME` の run のうち `createdAt > request_ts` の最新 run が `status == "completed"` になっている
+  ```bash
+  gh run list --workflow "<MENTION_WORKFLOW_NAME>" --event issue_comment --limit 10 \
+    --json databaseId,status,conclusion,url,createdAt \
+    --jq '[.[] | select(.createdAt > "<request_ts>")] | sort_by(.createdAt) | last'
+  ```
+- （`MENTION_WORKFLOW_NAME` が未特定の場合）最新の `claude` コメント本文に作業中の表示（`is working`、
+  `working…`、スピナー画像、未完了のチェックリスト `- [ ]` のみ等）が無く、かつ 60 秒後の再取得でも
+  `updatedAt` が変化していない
 
 手順:
 
@@ -135,7 +238,29 @@ review thread 側は `/fix-review` が対応済みスレッドを Resolve する
 新規レビューは到着しないため、workflow を rerun して再投稿を促す。
 
 Step 0-6 で rerun 機構が無効化されている場合、または `--max-reruns 0` の場合は、この Step を
-丸ごとスキップして **C (TIMEOUT)** で終了する。
+丸ごとスキップして **C (TIMEOUT)** で終了する（ただし下記「mention へのフォールバック」は `--max-reruns 0` 以外なら適用する）。
+
+**mention モードの場合**は、以下の 1〜7 の代わりにこの手順を行う（メンション起動の run は head SHA に紐付かないため）:
+
+1. Step 1-2 と同じ `gh run list --workflow "<MENTION_WORKFLOW_NAME>" ...` で `createdAt > request_ts` の最新 run を取得する
+2. run が見つからない（`MENTION_WORKFLOW_NAME` 未特定の場合を含む）→ メンションが workflow を起動していない。
+   **C (TIMEOUT)** で終了し、考えられる原因（トリガ文言の不一致、投稿者の権限不足、workflow の `if:` 条件）を報告する
+3. `status != "completed"` → **C (TIMEOUT)** で終了し、run URL を添えて「実行中のまま待機上限に達した」と報告する
+4. `status == "completed"` で `conclusion` が `skipped` / `action_required` / `neutral` 等 → **C (TIMEOUT)** で終了し、
+   `conclusion` と run URL を報告する
+5. `rerun_count >= max-reruns` → **F (REVIEW_MISSING)** で終了する
+6. それ以外（`success` / `failure` / `cancelled` / `timed_out` で応答が無い）→ まず `request_ts` より新しい
+   `claude` 以外の bot（`github-actions` 等）のコメントが無いか確認する。あればレビューは投稿されているが
+   `/fix-review` が読めない login なので、Step 0-7 に従い **D (ERROR)** で終了する。無ければ `gh run rerun` ではなく、
+   **Step 1-R のレビュー依頼コメントを再投稿**する（再投稿の方が新しい `request_ts` で追跡できるため）
+7. `rerun_count += 1`、`rerun_total += 1`。待機予算をリセットして Step 1-2 に戻る
+
+**mention へのフォールバック**（`mention_fallback == true` の auto モードのみ）: 下記 2. で「対象 run を特定できない」
+となった場合は C で終了する代わりに、`REVIEW_MODE = mention`・`mention_fallback = false`・`TRIGGER_PHRASE = "@claude"`・
+`MENTION_WORKFLOW_NAME` 未特定として **Step 1-R** に進み、以降の反復も mention モードで続ける。
+この切り替えは全体で 1 回限りとし、Step 5 のレポートに「自動レビューが見つからなかったため mention モードに切り替えた」と明記する。
+
+**auto モードの場合**:
 
 1. 現在の head SHA と対象 run を取得する:
    ```bash
@@ -215,13 +340,15 @@ Step 0-6 で rerun 機構が無効化されている場合、または `--max-re
   - 注: `/fix-review` が `wontfix` としたスレッドは Resolve されずに残るため、次の反復でも
     未解決 review thread として検出される。これは Safety notes の収束チェック（同一 issue 集合の
     2 回連続検出）で **E (NOT_CONVERGED)** に倒れ、人間の判断に委ねられる。
-  - Step 1 に戻る
+  - Step 1 に戻る（mention モードでは Step 1-1 から Step 1-R に進み、修正後の差分に対するレビューを改めて依頼する）
 
 ### Step 5: 最終レポート
 
 終了時に以下を表示する:
 
-- 終了ステータス（A / B / C / D / E / F）
+- 終了ステータス（A / B / C / D / E / F / G）
+- レビューモード（`auto` / `mention`）と判定根拠（`--mode` 指定 / 検出した workflow 名 / auto からのフォールバック）。
+  mention モードの場合は投稿したレビュー依頼コメントの件数 `requests_total`
 - 実行した反復回数
 - 各反復で修正した issue のサマリ（/fix-review の出力を集約）
   - 反復 0 回で SUCCESS した場合は「修正なし（初回時点で High/Medium 指摘なし）」と明示する
@@ -232,6 +359,8 @@ Step 0-6 で rerun 機構が無効化されている場合、または `--max-re
 - 未解消で残った High / Medium 指摘（B / C / E で終了した場合。元コメントの表記 🔴/🟡 か High/Medium かはそのまま反映）
   - 未解決のまま残った review thread は `path:line` を併記する
 - 次にユーザーが取るべきアクション（手動レビュー、再実行など）
+  - **G (NO_REVIEWER)** の場合は、Claude の自動レビュー workflow（`pull_request` トリガ）または `@claude` メンションに
+    応答する workflow（`issue_comment` トリガ）の導入を案内する（例: Claude Code の `/install-github-app`）
   - **F (REVIEW_MISSING)** の場合は、workflow 側の調査を促す: 該当 run のログ確認
     （`gh run view <run-id> --log`）、`GITHUB_TOKEN` / PAT の権限、API rate limit、
     `anthropics/claude-code-action` のバージョンや設定変更の有無
@@ -255,6 +384,12 @@ Step 0-6 で rerun 機構が無効化されている場合、または `--max-re
   リセットせず必ずレポートに出す。**2 反復以上連続で rerun が発生している場合**は、
   一時的な取りこぼしではなく workflow 側の恒常的な問題（権限・設定・action のバグ）である可能性が高いので、
   その旨をレポートに明記して人間に引き渡す。
+- **mention モードの依頼コメントは本スキルの反復に必要な分だけ投稿する**。1 回のレビュー待機につき
+  初回依頼 1 件 + 再投稿 `--max-reruns` 件が上限で、新規レビューを待っている間に重ねて依頼しない
+  （応答 workflow が多重起動し、Actions 実行時間と API 利用量を浪費するため）。
+- mention モードのレビュアーは commit / push 権限を持ちうる。依頼文でコード変更を禁止しているが、
+  それでもレビュアーが PR ブランチに commit を push していた場合は、`/fix-review` を実行する前に
+  `git pull --ff-only` で取り込み、その commit の存在と内容を Step 5 のレポートに明記する（勝手に revert しない）。
 - rerun は「レビューコメントが投稿されない」ことの救済のみを目的とする。レビュー内容そのものが
   気に入らない（指摘が的外れ等）ことを理由に rerun してはならない。
 - `/fix-review` の `--yes` は非対話モード。ユーザー確認を全てスキップするので、
