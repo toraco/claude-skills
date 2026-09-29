@@ -6,7 +6,7 @@ allowed-tools: Bash(git symbolic-ref:*), Bash(git log:*), Bash(git diff:*), Bash
 
 # Revise spec: $ARGUMENTS
 
-**使い方**: `/revise-spec [--mode=spec-only|with-impl] [仕様パス] [--interactive]`
+**使い方**: `/revise-spec [--mode=spec-only|with-impl] [仕様パス] [--yes|--interactive]`
 
 ## Goal
 
@@ -39,8 +39,8 @@ allowed-tools: Bash(git symbolic-ref:*), Bash(git log:*), Bash(git diff:*), Bash
 
 ### Step 0: Mode と対象の決定
 
-- 状態変数を宣言: `MODE`（`spec-only` or `with-impl`）、`SPEC_PATHS`（対象仕様ファイル配列）、`DIFF_RANGE`（Mode B のみ）、`INTERACTIVE`（既定 `false`）、`SKIPPED_ITEMS = []`（ユーザーがスキップを選んだ項目の id 一覧）
-- **タスクリスト化**: `TaskCreate` で主要ステップ（対象特定 / バイアス排除スキャン / 指摘抽出 / ユーザー確認 / 仕様更新 / 整合性確認 / 最終レポート）をタスクとして登録。各ステップ開始時に `in_progress`、完了時に `completed` に更新
+- 状態変数を宣言: `MODE`（`spec-only` or `with-impl`）、`SPEC_PATHS`（対象仕様ファイル配列）、`DIFF_RANGE`（Mode B のみ）、`INTERACTIVE`（既定 `false`）、`YES`（既定 `false`）、`SKIPPED_ITEMS = []`（ユーザーがスキップを選んだ項目の id 一覧）
+- **タスクリスト化**: `TaskCreate` で主要ステップ（対象特定 / バイアス排除スキャン / 指摘抽出 / 方針確定 / 仕様更新 / 整合性確認 / 最終レポート）をタスクとして登録。各ステップ開始時に `in_progress`、完了時に `completed` に更新
 
 #### 0a. 引数解析
 
@@ -48,7 +48,8 @@ allowed-tools: Bash(git symbolic-ref:*), Bash(git log:*), Bash(git diff:*), Bash
 - `--mode=with-impl` があれば `MODE = with-impl`
 - 未指定の場合は後述の自動判定を行い、**判定結果をそのままデフォルトとして採用する**（確認は挟まない。共通方法論「Step 0 の自動確定」に従う）
 - 引数にパス（`.md` や `docs/` 配下）が含まれれば `SPEC_PATHS` の初期候補に入れる
-- `--interactive` があれば `INTERACTIVE = true`。このときのみ Step 0 の各項目を従来通り `AskUserQuestion` で確認する
+- `--interactive` があれば `INTERACTIVE = true`。このときのみ Step 0 の各項目を従来通り `AskUserQuestion` で確認し、Step 3 でも全件を質問する
+- `--yes` があれば `YES = true`。Step 3 で一切質問せず推奨方針を採用する（共通方法論「Step 3 の推奨方針の自動採用」）。`--interactive` と同時指定なら `--interactive` を優先
 
 #### 0b. 対象仕様の特定
 
@@ -253,9 +254,10 @@ scoring プロンプト:
 - reason: <1-2 行で分類の根拠>
 - confidence: 0-100
 - suggested_options: <classification=decision-needed の場合のみ、最大 3 件の方針候補を箇条書き。それ以外は省略>
+- recommended_option: <classification=decision-needed の場合のみ、suggested_options のうち最も妥当な 1 件とその理由（1 行）。優劣が付けられなければ省略>
 ```
 
-`suggested_options` は Step 3 で 🟣 の AskUserQuestion 選択肢として利用する。scoring subagent が方針を思いつかない場合は空配列を返し、Step 3 で親 skill が「仕様更新（内容を変更）」の自由記述に誘導する。
+`suggested_options` は Step 3 で 🟣 の AskUserQuestion 選択肢として利用し、`recommended_option` を先頭に `(Recommended)` 付きで置く。scoring subagent が方針を思いつかない場合は空配列を返し、Step 3 で親 skill が「仕様更新（内容を変更）」の自由記述に誘導する。
 
 scoring 結果と指摘本体をマージして、ユーザー提示用の `CLASSIFIED_ISSUES` を生成する。
 
@@ -284,26 +286,54 @@ scoring 結果と指摘本体をマージして、ユーザー提示用の `CLAS
 
 - `confidence < 50` の表示規則と `SKIPPED_ITEMS` の除外は、共通方法論「confidence の表示規則」に従う
 
-### Step 3: ユーザー確認 (AskUserQuestion)
+### Step 3: 対応方針の確定（推奨の自動採用 + 必要な項目だけ確認）
 
-🔵 / 🟠 / 🟣 に分類された指摘について、`AskUserQuestion` で対応方針を確定する。質問の分割・options 上限は共通方法論「AskUserQuestion の運用」に従う（分類をまたいだ混合は OK。🔵 と 🟣 を同じ質問にまとめて良い）。
+🔵 / 🟠 / 🟣 に分類された指摘について対応方針を確定する。**推奨方針が明確な項目は質問せずに自動採用** し、`AskUserQuestion` は判断が割れる項目だけに使う。振り分け・`--yes` / `--interactive` の挙動は共通方法論「Step 3 の推奨方針の自動採用」に従う。
 
-各指摘について次の選択肢を提示:
+#### 3a. 分類ごとの既定アクション（推奨）
+
+| 分類 | 既定アクション |
+|---|---|
+| 🔵 spec-fix | 仕様更新（指示通り） |
+| 🟠 impl-fix | 実装側で対応（`HANDOFF_LIST` に積む。本 skill は編集しない） |
+| 🟣 decision-needed | scoring の `recommended_option` の方針で仕様更新 |
+
+- 既定（フラグ無し）: 🔵 / 🟠 で `confidence >= 70` は既定アクションを **自動採用**。それ以外（低信頼の 🔵 / 🟠、全ての 🟣）だけを質問する
+- 自動採用した項目は 3b の質問の前に 1 ブロックで提示する:
+
+```
+## 自動採用した対応方針 (<件数>件)
+
+| id | 分類 | 信頼度 | 採用アクション | サマリ |
+|----|------|--------|----------------|--------|
+| A1 | 🔵 spec-fix | 85 | 仕様更新（指示通り） | ... |
+| B3 | 🟠 impl-fix | 90 | 実装側で対応 | ... |
+
+違う項目があれば中断してください（仕様の編集は commit されないので、後から `git diff` で確認・差し戻しもできます）。
+```
+
+#### 3b. 質問時の選択肢
+
+質問に回った項目について、次の選択肢を提示する。**既定アクションを先頭に置き、ラベル末尾に `(Recommended)` を付ける**。質問は 1 回の `AskUserQuestion` 呼び出しにまとめ、分割・options 上限は共通方法論「AskUserQuestion の運用」に従う（分類をまたいだ混合は OK。🔵 と 🟣 を同じ呼び出しにまとめて良い）。
 
 - **仕様更新（指示通り）**: skill が仕様を編集する
 - **仕様更新（内容を変更）**: `notes` でユーザーが具体的な更新内容を指定する → skill がその内容で編集
 - **実装側で対応**: 🟠 の場合、および Mode B で仕様が正だと判明した場合。本 skill は編集せず、最終レポートに受け渡しリストとして積む
 - **スキップ**: 指摘を無視。id を `SKIPPED_ITEMS` に追加し、次回以降の実行時に再提示しない
 
-🟣（decision-needed）については、選択肢として「方針 A / 方針 B / ...」を scoring subagent の出力から引き出して提示すると判断しやすい。方針が決まった後は「仕様更新（指示通り）」相当の扱いとする。
+🟣（decision-needed）については、選択肢として「方針 A / 方針 B / ...」を scoring subagent の `suggested_options` から引き出し、`recommended_option` を先頭に `(Recommended)` 付きで提示する（残り枠は「スキップ」。4 件上限に収める）。方針が決まった後は「仕様更新（指示通り）」相当の扱いとする。
+
+#### 3c. `--yes` 指定時
+
+質問を一切出さず、全項目に既定アクションを採用する。`recommended_option` が無い 🟣 は編集せず「未決定」として Step 6 に残す（`SKIPPED_ITEMS` には入れない）。自動採用一覧の提示（3a）は省略しない。
 
 ### Step 4: 仕様更新の実行
 
-Step 3 でユーザーが「仕様更新」を選んだ項目について、対象仕様ファイルを `Edit`（新規ファイル作成が必要なら `Write`）する。
+Step 3 で「仕様更新」に確定した項目（自動採用分を含む）について、対象仕様ファイルを `Edit`（新規ファイル作成が必要なら `Write`）する。
 
 - 同一ファイルに複数の更新がある場合はまとめて適用し、Edit の競合を避ける
 - 更新後に `git diff <file>` で意図通りか確認する
-- 更新が複雑（節の全書き換え・構成変更など）の場合は、サマリを返す前にユーザーに「このファイルは大きく変わるが進めて良いか」を `AskUserQuestion` で再確認する
+- 更新が複雑（節の全書き換え・構成変更など）になっても再確認はしない。該当ファイルを Step 6 で「大規模変更」として明示し、差分の確認を促す
 
 **コード側の修正は一切しない**。🟠 項目および「実装側で対応」を選んだ項目は、次の受け渡しリストに積むだけにとどめる:
 
@@ -326,7 +356,7 @@ HANDOFF_LIST:
 残存指摘がある場合:
 
 - 件数が **減っている** → 更新の効果を確認して完了
-- 件数が **減っていない / 増えている** → 更新で新たな問題を作った可能性。ユーザーに状況を報告し、続行可否を確認
+- 件数が **減っていない / 増えている** → 更新で新たな問題を作った可能性。続行可否は問わず、Step 6 で警告として報告する
 
 `SKIPPED_ITEMS` や「実装側で対応」に回した項目は残っていて当然なので、「対応済みのはずなのに残っている項目」のみを報告対象にする。
 
@@ -334,7 +364,9 @@ HANDOFF_LIST:
 
 次を表示して終了:
 
-- 更新した仕様ファイル一覧（パス + 何を変えたかの 1 行）
+- 更新した仕様ファイル一覧（パス + 何を変えたかの 1 行）。大規模変更になったファイルには `⚠ 大規模変更` を付ける
+- 自動採用した項目と質問で確定した項目の内訳（id のみで可）
+- `--yes` で「未決定」として残った 🟣 項目（あれば）
 - 🟠 / 「実装側で対応」に分類された項目一覧（`HANDOFF_LIST` 全件）
   - 各項目について「次のステップ: `bugfix` または `local-review` skill の利用を推奨」と添える
 - スキップされた項目一覧（id のみ、次回再提示されないよう `SKIPPED_ITEMS` に入っていることを明示）
