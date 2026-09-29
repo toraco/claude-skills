@@ -17,10 +17,20 @@ description: 新規機能の実装計画を立案する。実装まで行った�
 
 1. `git branch --show-current` で選択中ブランチを確認する
 2. `git fetch origin <branch>` で origin の同名ブランチを取得する（ネットワークエラー時は数秒おきに数回リトライ）
-   - origin に同名ブランチが存在しない（セッション用に新規作成されたばかりのブランチ等）場合は、pull をスキップし、その旨を明示して次へ進む
+   - origin に同名ブランチが存在しない（セッション用に新規作成されたばかりのブランチ等）場合は、3 の代わりに下記「ベースブランチの取り込み」を行う
 3. `git pull --ff-only origin <branch>` で fast-forward 取り込みする
    - 未 commit の変更があって pull できない場合、または履歴が分岐していて fast-forward できない場合は、stash・merge・rebase・reset を勝手に行わず、状況を報告してユーザーに対応を確認する
 4. 取り込んだ結果（最新化した / 既に最新 / スキップした理由）を 1 行で報告してから Step 1 に進む
+
+### ベースブランチの取り込み（origin に同名ブランチが無い場合）
+
+1. ベースブランチを決める
+   - `git symbolic-ref --short refs/remotes/origin/HEAD`（失敗したら `git remote set-head origin --auto` の後に再実行、それでも取れなければ `git remote show origin` の `HEAD branch`）で origin の default branch を得る
+   - default branch が `main` / `master` でも origin に `develop` が存在する場合など、どれがベースか判断できないときはユーザーに確認する
+2. `git fetch origin <base>` で取得する（ネットワークエラー時は数秒おきに数回リトライ）
+3. `git merge --ff-only origin/<base>` で選択中ブランチを fast-forward する
+   - 選択中ブランチに独自の commit があって fast-forward できない場合は、merge commit の作成・rebase・reset を勝手に行わず、状況（独自 commit の件数、base との差分）を報告してユーザーに対応を確認する
+   - 未 commit の変更が衝突して取り込めない場合も同様に、stash 等をせずユーザーに確認する
 
 ## Step 1: 基本設計書／仕様ドキュメントの確認（What: 機能仕様・要件定義）
 
