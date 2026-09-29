@@ -6,7 +6,7 @@ allowed-tools: Bash(git symbolic-ref:*), Bash(git log:*), Bash(git diff:*), Bash
 
 # Revise tests: $ARGUMENTS
 
-**使い方**: `/revise-tests [--mode=auto|impl-only] [--scope=<glob>] [--interactive]`
+**使い方**: `/revise-tests [--mode=auto|impl-only] [--scope=<glob>] [--yes|--interactive]`
 
 ## Goal
 
@@ -42,14 +42,15 @@ TDD 前提のプロジェクトで、ブランチの現在状態に対してテ�
 
 ### Step 0: Mode と対象の決定
 
-- 状態変数を宣言: `MODE`（`auto` or `impl-only`）、`DIFF_RANGE`、`IMPL_PATHS`（実装側の変更ファイル配列）、`TEST_PATHS`（既存テストファイル配列 + 今回追加予定のテストが置かれるべきパス群）、`SPEC_PATHS`（仕様ファイル配列、無ければ空）、`INTERACTIVE`（既定 `false`）、`SKIPPED_ITEMS = []`、`HANDOFF_LIST = []`
-- **タスクリスト化**: `TaskCreate` で主要ステップ（対象特定 / 三面スキャン / 突合 & 分類 / ユーザー確認 / テスト編集 / ランナー検証 / 最終レポート）を登録。各ステップ開始時に `in_progress`、完了時に `completed` に更新
+- 状態変数を宣言: `MODE`（`auto` or `impl-only`）、`DIFF_RANGE`、`IMPL_PATHS`（実装側の変更ファイル配列）、`TEST_PATHS`（既存テストファイル配列 + 今回追加予定のテストが置かれるべきパス群）、`SPEC_PATHS`（仕様ファイル配列、無ければ空）、`INTERACTIVE`（既定 `false`）、`YES`（既定 `false`）、`SKIPPED_ITEMS = []`、`HANDOFF_LIST = []`
+- **タスクリスト化**: `TaskCreate` で主要ステップ（対象特定 / 三面スキャン / 突合 & 分類 / 方針確定 / テスト編集 / ランナー検証 / 最終レポート）を登録。各ステップ開始時に `in_progress`、完了時に `completed` に更新
 
 #### 0a. 引数解析
 
 - `$ARGUMENTS` に `--mode=auto` / `--mode=impl-only` があれば該当モードを採用。未指定時は後述の自動判定を行い、**判定結果をそのままデフォルトとして採用する**（確認は挟まない。共通方法論「Step 0 の自動確定」に従う）
 - `--scope=<glob>` が指定されていれば、`IMPL_PATHS` / `TEST_PATHS` のフィルタに使う（例: `--scope=src/auth/**`）
-- `--interactive` があれば `INTERACTIVE = true`。このときのみ Step 0 の各項目を従来通り `AskUserQuestion` で確認する
+- `--interactive` があれば `INTERACTIVE = true`。このときのみ Step 0 の各項目を従来通り `AskUserQuestion` で確認し、Step 3 以降でも全件を質問する
+- `--yes` があれば `YES = true`。Step 3 以降で一切質問せず推奨方針を採用する（共通方法論「Step 3 の推奨方針の自動採用」）。`--interactive` と同時指定なら `--interactive` を優先
 
 #### 0b. diff 範囲と実装ファイルの確定
 
@@ -287,6 +288,7 @@ scoring プロンプト:
 - confidence: 0-100
 - suggested_test_sketch: <classification=add/update の場合、テストの骨子（describe/it 構造、assert 対象、必要な mock）を 3-8 行で>
 - suggested_options: <classification=decision-needed の場合のみ、最大 3 件の方針候補を箇条書き>
+- recommended_option: <classification=decision-needed の場合のみ、suggested_options のうち最も妥当な 1 件とその理由（1 行）。優劣が付けられなければ省略>
 ```
 
 scoring 結果と突合項目本体をマージして、ユーザー提示用の `CLASSIFIED_ITEMS` を生成する。
@@ -307,9 +309,35 @@ scoring 結果と突合項目本体をマージして、ユーザー提示用の
 
 **表示規則**: 共通方法論「confidence の表示規則」に従う。
 
-### Step 3: ユーザー確認 (AskUserQuestion)
+### Step 3: 対応方針の確定（推奨の自動採用 + 必要な項目だけ確認）
 
-🟢 / 🟡 / 🔴 / 🟣 に分類された項目について、`AskUserQuestion` で対応方針を確定する。質問の分割・options 上限は共通方法論「AskUserQuestion の運用」に従う（分類混合 OK）。
+🟢 / 🟡 / 🔴 / 🟣 に分類された項目について対応方針を確定する。**推奨方針が明確な項目は質問せずに自動採用** し、`AskUserQuestion` は判断が割れる項目だけに使う。振り分け・`--yes` / `--interactive` の挙動は共通方法論「Step 3 の推奨方針の自動採用」に従う。
+
+#### 3a. 分類ごとの既定アクション（推奨）
+
+| 分類 | 既定アクション |
+|---|---|
+| 🟢 add / 🟡 update / 🔴 remove | 実行（指示通り）。`suggested_test_sketch` の通りに追加 / 更新 / 削除 |
+| 🟣 decision-needed | scoring の `recommended_option` の方針に沿って実行 or handoff |
+
+- 既定（フラグ無し）: 🟢 / 🟡 / 🔴 で `confidence >= 70` は既定アクションを **自動採用**。それ以外（低信頼の 🟢 / 🟡 / 🔴、全ての 🟣）だけを質問する
+  - 🔴 remove は意図的な冗長テスト（regression guard）の疑いがあれば scoring 段階で 🟣 に回っている前提。自動採用しても編集は commit されないので `git` で戻せる
+- 自動採用した項目は 3b の質問の前に 1 ブロックで提示する:
+
+```
+## 自動採用した対応方針 (<件数>件)
+
+| id | 分類 | 信頼度 | 採用アクション | サマリ |
+|----|------|--------|----------------|--------|
+| D1 | 🟢 add | 85 | 実行（指示通り） | 期限切れトークンの拒否テストを追加 |
+| D3 | 🔴 remove | 90 | 実行（指示通り） | legacy 関数のテストを削除 |
+
+違う項目があれば中断してください（テストの編集は commit されないので、後から `git diff` で確認・差し戻しもできます）。
+```
+
+#### 3b. 質問時の選択肢
+
+質問に回った項目について、次の 4 択を提示する。**既定アクションを先頭に置き、ラベル末尾に `(Recommended)` を付ける**。質問は 1 回の `AskUserQuestion` 呼び出しにまとめ、分割・options 上限は共通方法論「AskUserQuestion の運用」に従う（分類混合 OK）。
 
 **各項目の選択肢（AskUserQuestion の options 上限 4 件に合わせて 4 択に圧縮済み）**:
 
@@ -318,11 +346,15 @@ scoring 結果と突合項目本体をマージして、ユーザー提示用の
 3. **handoff（skill 外で対応）**: テスト側で解決できず、実装または仕様の修正が必要。`notes` で `implementation` か `specification` を指定してもらい、`HANDOFF_LIST` に積む（`implementation` → `bugfix` / `local-review`、`specification` → `revise-spec`）
 4. **スキップ**: 項目を無視し `SKIPPED_ITEMS` に追加
 
-**🟣 decision-needed の特別扱い**: 通常の 4 択ではなく、scoring 出力の `suggested_options`（最大 3 件）+ 「スキップ」= 4 件で提示する。ユーザーが suggested_options のいずれかを選んだら、それに沿って通常の編集フロー（実行 or handoff）に戻す。
+**🟣 decision-needed の特別扱い**: 通常の 4 択ではなく、scoring 出力の `suggested_options`（最大 3 件、`recommended_option` を先頭に `(Recommended)` 付き）+ 「スキップ」= 4 件で提示する。ユーザーが suggested_options のいずれかを選んだら、それに沿って通常の編集フロー（実行 or handoff）に戻す。
+
+#### 3c. `--yes` 指定時
+
+質問を一切出さず、全項目に既定アクションを採用する。`recommended_option` が無い 🟣 は編集せず「未決定」として Step 7 に残す（`SKIPPED_ITEMS` には入れない）。自動採用一覧の提示（3a）は省略しない。
 
 ### Step 4: テスト編集の実行
 
-Step 3 でユーザーが「実行」系を選んだ項目について、テストファイルを編集する。
+Step 3 で「実行」系に確定した項目（自動採用分を含む）について、テストファイルを編集する。
 
 #### 4a. 追加（🟢 add）
 
@@ -330,7 +362,7 @@ Step 3 でユーザーが「実行」系を選んだ項目について、テス�
 - 既存テストファイルに追記する場合は `Edit`、新規ファイルは `Write`
 - describe / describe 階層は既存テストに倣う
 - mock / fixture は既存の utility を優先利用。新規 helper を勝手に作らない
-- **TDD Red 確認**: 追加直後に該当テストのみランナーで実行し「一度緑になる（実装が既に満たしている）」ことを確認する。もし **赤（失敗）** になった場合は、実装側に不備がある可能性を示唆する → `HANDOFF_LIST` に "🟢 追加したが即失敗した" 項目として積み、ユーザーに報告（このテストは skip せず赤のまま残すか、ユーザー判断）
+- **TDD Red 確認**: 追加直後に該当テストのみランナーで実行し「一度緑になる（実装が既に満たしている）」ことを確認する。もし **赤（失敗）** になった場合は、実装側に不備がある可能性を示唆する → `HANDOFF_LIST` に "🟢 追加したが即失敗した" 項目として積み、テストは **skip せず赤のまま残す**（実装の不備を示す証拠になるため。これを既定とし質問はしない。`--interactive` 時のみ残すか戻すかを問う）
 
 #### 4b. 更新（🟡 update）
 
@@ -348,7 +380,7 @@ Step 3 でユーザーが「実行」系を選んだ項目について、テス�
 #### 4d. 共通ルール
 
 - 同一ファイルに複数の編集がある場合はまとめて適用し、Edit の競合を避ける
-- 大規模な再構成（describe 階層の組み替え等）が必要な場合は、編集前にユーザーに `AskUserQuestion` で確認
+- 大規模な再構成（describe 階層の組み替え等）が必要になっても再確認はしない（`--interactive` 時のみ確認）。該当ファイルを Step 7 で「大規模変更」として明示し、差分の確認を促す
 - テストで使うダミーデータは既存の factory / builder 関数を優先（`revise-spec` 同様、周辺コードの慣習を尊重）
 - **実装コードは一切編集しない**。実装修正が必要な項目は `HANDOFF_LIST` に積むだけ
 
@@ -363,8 +395,8 @@ Step 3 でユーザーが「実行」系を選んだ項目について、テス�
 - 全緑ならそのまま Step 6 へ
 - 赤のテストがあれば以下の分岐:
   - 🟢 追加したテストが赤 → **実装側の不備の可能性**。Step 4a の扱いに従い `HANDOFF_LIST` に積む
-  - 🟡 更新したテストが赤 → 更新内容が実装と合っていない可能性。ユーザーに報告し、テストを元に戻すか実装修正を handoff するか確認
-  - 🔴 削除は赤になりえない（削除されたのでそもそも走らない）。削除により他テストが壊れた場合は共通 helper の削除ミス等が疑われる → 確認
+  - 🟡 更新したテストが赤 → 更新内容が実装と合っていない可能性。既定では **更新を元に戻し**、`HANDOFF_LIST` に "🟡 更新したが赤" として積む（更新案は `suggested_test_sketch` とともに記録）。`--interactive` 時のみ、戻すか赤のまま handoff するかを問う
+  - 🔴 削除は赤になりえない（削除されたのでそもそも走らない）。削除により他テストが壊れた場合は共通 helper の削除ミス等が疑われる → 巻き込んで削除した helper / fixture を **元に戻して** 再実行し、Step 7 で報告する
 
 **ランナーが既存赤テスト（本 skill の編集前から失敗していたもの）を巻き込まないよう注意**。編集対象テストのみフィルタして実行する。
 
@@ -382,7 +414,10 @@ Step 3 でユーザーが「実行」系を選んだ項目について、テス�
 
 次を表示して終了:
 
-- 編集したテストファイル一覧（パス + 追加/更新/削除の種別 + 件数）
+- 編集したテストファイル一覧（パス + 追加/更新/削除の種別 + 件数）。大規模変更になったファイルには `⚠ 大規模変更` を付ける
+- 自動採用した項目と質問で確定した項目の内訳（id のみで可）
+- `--yes` で「未決定」として残った 🟣 項目（あれば）
+- Step 5 で元に戻した 🟡 更新 / helper（あれば）
 - 新規追加テストの「Red/Green」結果サマリ
 - `HANDOFF_LIST` 全件（実装側対応 / 仕様側対応に分けて）
   - 各項目について「次のステップ: `bugfix` / `local-review` / `revise-spec` skill の利用を推奨」と添える
