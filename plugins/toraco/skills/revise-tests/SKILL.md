@@ -249,7 +249,7 @@ Step 1 の 3 つ（Mode impl-only なら 2 つ）の subagent 出力を親 skill
 
 #### 2b. Scoring subagent で分類を確定
 
-突合結果の各項目に対し、scoring / 分類 subagent を並列呼び出しする（`subagent_type: "Explore"`、`model: "haiku"`）。
+突合結果の各項目に対し、scoring / 分類 subagent を並列呼び出しする（`subagent_type: "Explore"`、`model: "sonnet"`）。
 
 **並列化ルール**: 共通方法論「Scoring の並列化ルール」に従う（1 突合項目につき 1 subagent、10 件以上は 5 件バッチの順次パイプライン）。
 

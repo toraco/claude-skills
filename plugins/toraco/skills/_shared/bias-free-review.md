@@ -5,8 +5,8 @@
 ## Subagent dispatch の原則
 
 - スキャン系（読解・抽出）: `subagent_type: "Explore"`、`model: "sonnet"` を明示
-- scoring / 分類系: `subagent_type: "Explore"`、`model: "haiku"` を明示
-- **全ての Agent 呼び出しで `model` を明示する**（未指定だと品質差が出る）
+- scoring / 分類系: `subagent_type: "Explore"`、`model: "sonnet"` を明示
+- **全ての Agent 呼び出しで `model` を明示する**（未指定だと品質差が出る）。設計・オーケストレーション役を subagent に切り出す場合は `model: "opus"`（リポジトリ README「subagent のモデル指定」参照）
 - Agent はセッション継続できない。再スキャンは毎回、同じプロンプト・同じ設定で新規呼び出しする
 - Agent Teams は使わない。並列化は skill 内からの Agent ツール並列呼び出しで行う
 
@@ -91,7 +91,7 @@
 |---|---|
 | 「自分で読み返せば十分」 | 書き手バイアスで問題が見えなくなっている。必ず subagent を dispatch する。 |
 | 「1 つの subagent に両面を読ませれば速い」 | 整合的に解釈してしまい差分が埋もれる。必ず面を分離する。 |
-| 「scoring を省略して自分で分類すれば速い」 | 分類の判断にもバイアスが入る。haiku でも良いので別 agent に通す。 |
+| 「scoring を省略して自分で分類すれば速い」 | 分類の判断にもバイアスが入る。必ず別 agent（sonnet）に通す。 |
 | 「対象外側もまとめて直してしまおう」 | Tidy First 違反。編集は対象側のみ、反対側は `HANDOFF_LIST` へ。 |
 | 「最終整合性確認をスキップ」 | 更新で新たな矛盾・破壊を生んでも気づかない。軽量でよいので必ず再確認する。 |
 | 「念のため Step 0 で対象と Mode を確認しておこう」 | 自動判定が成立しているなら確認は不要。採用値を提示して進み、止まるのは候補 0 件 / diff 空 / `--interactive` のときだけ。 |
