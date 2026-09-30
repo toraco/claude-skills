@@ -220,7 +220,7 @@ Mode に応じて `Agent` ツールを呼び出す。**全呼び出しで `subag
 
 #### Scoring subagent（両 Mode 共通）
 
-全ての指摘について scoring/分類 subagent を並列呼び出しする（`subagent_type: "Explore"`、`model: "haiku"`）。並列化・バッチ規則は共通方法論「Scoring の並列化ルール」に従う。
+全ての指摘について scoring/分類 subagent を並列呼び出しする（`subagent_type: "Explore"`、`model: "sonnet"`）。並列化・バッチ規則は共通方法論「Scoring の並列化ルール」に従う。
 
 scoring プロンプト:
 
@@ -351,7 +351,7 @@ HANDOFF_LIST:
 更新後の仕様ファイルで、バイアス排除スキャンを再実行する。
 
 - Mode A: Step 1 と同じプロンプトで、**元の `SPEC_PATHS` 全件** を対象に subagent を再呼び出し（Step 4 で編集していないファイルも再スキャン対象。更新によって別ファイルと整合が崩れる可能性を拾うため）。新たな矛盾・曖昧さが残っていないか確認
-- Mode B: Step 1 の 1B-spec のみ再実行（実装は変えていないため 1B-impl は前回結果を再利用）し、drift を再突合。再 scoring は **Step 2 と同じプロンプト・同じ設定 (`Explore` + `haiku`) で新規に scoring subagent を呼び出す**（Agent ツールはセッション継続できないため毎回新規呼び出しになる前提）。親 skill は突合のペアリングまでを担当し、drift あり/なしの最終判定は必ず scoring 層を通す
+- Mode B: Step 1 の 1B-spec のみ再実行（実装は変えていないため 1B-impl は前回結果を再利用）し、drift を再突合。再 scoring は **Step 2 と同じプロンプト・同じ設定 (`Explore` + `sonnet`) で新規に scoring subagent を呼び出す**（Agent ツールはセッション継続できないため毎回新規呼び出しになる前提）。親 skill は突合のペアリングまでを担当し、drift あり/なしの最終判定は必ず scoring 層を通す
 
 残存指摘がある場合:
 

@@ -72,6 +72,10 @@ claude plugin list | grep -q "toraco@toraco-skills" || \
   - 明示起動専用にしたい skill は description 末尾に「自動起動はせず、ユーザーが明示的に指示したときだけ使う。」と書く。
 - **description は 200 文字以内**。skill 一覧は文字数予算があり、溢れると使用頻度の低い skill の description ごと落とされる。
 - 同梱ファイルを参照するときは `${CLAUDE_SKILL_DIR}` を使う。`_shared/` は `${CLAUDE_SKILL_DIR}/../_shared/` で参照する。
+- **subagent のモデル指定**: `Agent` ツールで `model` を指定する場合は、役割に応じて次のエイリアスを使う（エイリアスは常に各系統の最新モデルに解決される。バージョン付きのモデル ID は書かない）。
+  - 設計・オーケストレーション（計画立案、複数 agent の結果の統合・判断など）: `model: "opus"`
+  - 単純作業・実装（読解・抽出、scoring / 分類、コード修正など）: `model: "sonnet"`
+  - `haiku` は使わない。
 
 ## 検証
 

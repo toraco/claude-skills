@@ -50,7 +50,7 @@ GitHub App による Claude Code Review（公式 `code-review` プラグイン�
 ### Step 1.5: 事前コンテキスト収集（2 並列）
 
 **`Agent` ツールを 1 メッセージ内で 2 回並列呼び出し** する。両方とも
-`subagent_type: "Explore"`、`model: "haiku"` を **明示** する。
+`subagent_type: "Explore"`、`model: "sonnet"` を **明示** する。
 
 #### 1.5a: CLAUDE.md ファイル列挙
 
@@ -158,7 +158,7 @@ False positive 例（全 subagent に必ず渡す）:
 
 Step 2 で集まった全 issue について、各 issue ごとに `Agent` ツールを並列呼び出し
 し、0-100 のスコアを返させる。全 scoring 呼び出しで `subagent_type: "Explore"`、
-`model: "haiku"` を **必ず明示** する（公式と同じ軽量モデル）。
+`model: "sonnet"` を **必ず明示** する。
 1 メッセージ内で全 issue 分の Agent 呼び出しを並列化する。
 
 各 scoring 呼び出しに渡す情報:
@@ -288,9 +288,9 @@ Step 2 で集まった全 issue について、各 issue ごとに `Agent` ツ�
 ## Notes
 
 - **`Agent` ツール呼び出しでは必ず `model` を明示する**:
-  - Step 1.5a / 1.5b (事前コンテキスト): `model: "haiku"`
+  - Step 1.5a / 1.5b (事前コンテキスト): `model: "sonnet"`
   - Step 2 (5 reviewer): `model: "sonnet"`
-  - Step 3 (scoring): `model: "haiku"`
+  - Step 3 (scoring): `model: "sonnet"`
   - `model` 未指定だとデフォルトの軽量モデルが走り、公式プラグインとの品質差が
     顕著になる（この skill を作り直した主因）
 - レビュー subagent には「build / typecheck は別途 CI で走るので、ここでは
