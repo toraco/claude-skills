@@ -27,6 +27,7 @@ claude-skills/
 | `make-plan` / `grilling` | 計画立案・壁打ち |
 | `file-issue` | issue 起票 |
 | `release` / `fix-ci` | リリース・CI 修復 |
+| `garden-deps` | 依存パッケージのガーデニング（Renovate の手動分・管轄外の棚卸しと一括更新） |
 
 ## 使い方
 
