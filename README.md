@@ -83,5 +83,5 @@ claude plugin list | grep -q "toraco@toraco-skills" || \
 ```
 claude plugin validate .
 claude plugin marketplace add toraco/claude-skills && claude plugin install toraco@toraco-skills
-claude plugin details toraco   # Skills (14) と出れば OK
+claude plugin details toraco   # Skills (15) と出れば OK
 ```
