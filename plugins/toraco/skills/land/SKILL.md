@@ -15,16 +15,16 @@ description: レビュー済み PR をマージし、マージ後の CI（主に
 
 ## いつ使うか
 
-- レビューが通った機能 PR / 修正 PR をマージして、デプロイ完了・issue クローズまで見届けたいとき（`/land`）
+- レビューが通り CI も通過した（または実行中の）機能 PR / 修正 PR をマージして、デプロイ完了・issue クローズまで見届けたいとき（`/land`）
 - マージとデプロイ監視だけしたいとき（`--until=deploy`）
 - 既にマージ済みの PR について、デプロイ監視以降だけ進めたいとき（マージ済みなら Step 2 から再入する）
 
 使わない場面:
 
 - PR がまだない / 変更を PR にしたい → `ship`
+- PR の CI が落ちている → `fix-ci`（CI が通過してから `/land`）
 - レビュー指摘がまだ残っている → `fix-review` / `auto-fix-review`
 - 統合ブランチ（develop）→ 本番ブランチ（main）のリリース PR → `release`（収録範囲の確定と back-merge が必要なため、本 skill では扱わない）
-- マージ前の CI が落ちている → `fix-ci`
 
 ## 引数
 
@@ -52,14 +52,27 @@ description: レビュー済み PR をマージし、マージ後の CI（主に
 
 ### Step 1: マージ前の確認 → マージ
 
-マージ可否を以下でまとめて判定する。**1 つでも満たさなければマージせず、何が足りないかを報告して停止する**（自分で approve したり、チェックを迂回したりしない）。
+**マージの前提は「PR の CI が通過していること」**。`/land` はレビュー完了後に起動される前提なので、レビューの完了はユーザーの起動をもって判断し、CI の通過をこの skill が確かめる唯一のマージ条件とする。
 
-- `gh pr view <n> --json state,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,reviewRequests`
-  - draft でない / `mergeable` が `MERGEABLE` / 必須 checks が全て success（実行中なら完了まで待つ。`gh pr checks <n> --watch --interval 30` をバックグラウンドで）
-  - `reviewDecision` が `APPROVED`、またはリポジトリに必須レビューの設定がない
-  - **Claude Approvals check を運用しているリポジトリでは、それが pass していること**
-- 未解決のレビュースレッド（`gh api graphql` で `reviewThreads { isResolved }`）が残っていないこと。残っていれば内容を示して、マージしてよいか確認する
-- base の先行で PR が古くなっている（`mergeStateStatus` が `BEHIND`）場合、ブランチ保護が up-to-date を要求していなければそのままマージしてよい。要求していれば `gh pr update-branch <n>` → CI 再確認
+#### CI の通過確認
+
+- `gh pr checks <n> --json name,state,bucket,link` で head コミットの checks を取得する
+  - 対象は**必須かどうかに関わらず PR 上のすべての checks**（GitHub Actions・外部 CI・Claude Code Review / Claude Approvals 等の check を含む）
+  - 通過とみなすのは `bucket` が `pass` / `skipping` のもの。`fail` / `cancel` が 1 つでもあれば未通過
+- **実行中（`pending`）のものがあれば完了まで待つ**: `gh pr checks <n> --watch --interval 30` をバックグラウンドで実行するか `Monitor` で待つ。待っている間に Step 0 の慣例確認や Step 3 の判断材料の読み込みを進める
+- **未通過ならマージせずここで停止する**（`--until` に関わらず）。失敗した check と `--log-failed` から読み取れる原因を報告し、`fix-ci` での調査・修正を提案する。rerun・テストの skip・ブランチ保護の迂回でマージ可能な状態を作らない
+- **check が 1 つもない**（CI 未設定のリポジトリ / まだ check が登録されていない）場合: push 直後で未登録の可能性があるので数十秒おきに数回見直す。それでも無ければ「CI なし」として、マージしてよいかユーザーに確認する（CI 通過の前提を満たせないため）
+- 待っている間に head へ新しいコミットが push されたら、新しい head の checks で判定し直す
+
+#### その他の状態確認
+
+CI が通過したら、`gh pr view <n> --json isDraft,mergeable,mergeStateStatus` で次を確認する。満たさなければ、何が足りないかを報告して停止する（自分で approve したり、ブランチ保護を迂回したりしない）。
+
+- draft でない / `mergeable` が `MERGEABLE`（コンフリクトがあれば停止）
+- base の先行で PR が古くなっている（`mergeStateStatus` が `BEHIND`）場合、ブランチ保護が up-to-date を要求していなければそのままマージしてよい。要求していれば `gh pr update-branch <n>` → **新しい head で CI の通過確認からやり直す**
+- 必須レビュー等のブランチ保護の条件は GitHub 側の判定に任せる。`gh pr merge` が保護ルールで拒否されたら、その理由を報告して停止する
+- 未解決のレビュースレッドが残っていても停止はしないが、件数と概要を最終報告に含める
+
 - マージ:
   - Step 0 で確認した**このリポジトリの慣例の方式**で `gh pr merge <n> --<squash|merge|rebase>`。慣例が読み取れなければ許可されている方式のうち squash を優先し、その旨を報告する
   - head ブランチの削除はリポジトリの `delete_branch_on_merge` か過去の慣例に従う（`--delete-branch`）
@@ -145,7 +158,7 @@ PR の内容（タイトル・本文・差分・Test plan）と**このセッシ
 
 1 ブロックで報告する:
 
-- PR（URL）/ マージ方式とマージコミット
+- PR（URL）/ マージ前の CI 結果 / マージ方式とマージコミット / 未解決のレビュースレッド（あれば）
 - マージ後 CI: run URL・結果・デプロイ先とバージョン
 - 動作確認: 実施有無とその理由、項目ごとの結果、ユーザーへ委ねた項目
 - 関連 issue: クローズした / コメントのみ / 未処理、それぞれの理由
@@ -153,7 +166,7 @@ PR の内容（タイトル・本文・差分・Test plan）と**このセッシ
 
 ## Notes
 
-- **ユーザーゲートは Step 1 のマージ可否判定と、Step 2・3 の失敗時の停止**。全ての条件を満たしていれば、`/land` の起動そのものをマージ・issue クローズの承認とみなして確認なしで進めてよい
+- **ユーザーゲートは Step 1 の CI 未通過・マージ不可時の停止と、Step 2・3 の失敗時の停止**。CI が通過してマージ可能であれば、`/land` の起動そのものをマージ・issue クローズの承認とみなして確認なしで進めてよい
 - **base への直接 push・force push、ブランチ保護の解除は行わない**
 - `gh` が使えない環境（クラウドセッション等）では、GitHub MCP ツール（`mcp__github__*`）で同等の操作を行う（PR の取得・マージ、Actions の run / job ログの取得、issue のコメント・クローズ）
 - このセッションが PR の activity を購読していた場合（`subscribe_pr_activity`）、マージ後に購読を解除する
@@ -165,7 +178,9 @@ PR の内容（タイトル・本文・差分・Test plan）と**このセッシ
 
 | 出てくる合理化 | 実態 |
 |---|---|
-| 「レビューは通っているので CI の完了を待たずにマージしてよい」 | 必須 checks が未完了・失敗のままマージすると base が壊れ、後続の全 PR に波及する。完了まで待つ |
+| 「レビューは通っているので CI の完了を待たずにマージしてよい」 | CI 通過がこの skill のマージの前提。未完了・失敗のままマージすると base が壊れ、後続の全 PR に波及する。完了まで待つ |
+| 「必須でない check の失敗だから無視してマージしてよい」 | 必須かどうかに関わらず、失敗している check があれば未通過として停止する。無視してよいかはユーザーが判断する |
+| 「たぶん flaky なので rerun して通ったらマージ」 | 失敗の原因を確かめずに rerun しない。`fix-ci` で切り分ける |
 | 「デプロイ run が success なので確認完了」 | パスフィルタや `if:` で肝心のジョブが skip されていても success になる。ログで実体を確認する |
 | 「小さい変更なので動作確認は不要」 | 要否は変更の大きさではなく**種類**で決める。環境変数 1 つの追加でも環境依存の確認は要る。判断理由を必ず報告する |
 | 「確認できなかったが、たぶん大丈夫なので OK と書く」 | 未確認は未確認と報告し、手動確認の手順を渡す |
