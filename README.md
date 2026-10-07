@@ -61,11 +61,29 @@ skill は `/toraco:<skill-name>` で起動する。
 宣言だけではインストールが走らない場合があるため（初回セッションで marketplace の clone が session start に間に合わない既知の問題）、クラウド環境の **Setup script** にも冪等な導入コマンドを書いておくと確実。Setup script は Claude Code の起動前に実行される。
 
 ```bash
+# --- toraco skills ---
+# リポジトリの .claude/settings.json での宣言が session start に間に合わないことが
+# あるための保険。ここが落ちてもセッションは起動させたいので、失敗は許容する。
+# 環境のスナップショットは script を変更するまで再利用されるため、
+# claude-skills の更新をすぐ反映したいときはこの日付を書き換えて再構築させる: 2026-10-01
+set +e
 claude plugin marketplace list | grep -q toraco-skills || \
   claude plugin marketplace add toraco/claude-skills
 claude plugin list | grep -q "toraco@toraco-skills" || \
   claude plugin install toraco@toraco-skills
+claude plugin marketplace update toraco-skills || true
+claude plugin update toraco@toraco-skills || true
+set -e
 ```
+
+> **skill を追加・修正してもクラウドには自動で反映されない。** 理由は 2 つある。
+>
+> - **環境のスナップショットが再利用される。** Setup script の実行結果はスナップショットとして保存され、script の内容が変わるまで使い回される。その間は Setup script 自体が走らないため、plugin も更新されない。
+> - **install だけでは更新されない。** plugin はインストール時のコミットで `~/.claude/plugins/cache/` に固定される。`install` は導入済みなら何もしないので、`marketplace update` / `plugin update` がないと再構築しても古い版が残ることがある。
+>
+> そのため、この repo の変更をクラウドに反映したいときは **Setup script 内のコメントの日付を書き換えて保存する**（script が変わるのでスナップショットが作り直され、`update` で最新版が入る）。すぐに試したいだけなら、セッション内で `update` の 2 行を実行してから新しいセッションを開始してもよい（`plugin update` は再起動後に反映。ただしスナップショットには残らない）。
+>
+> 反映されたかは `/toraco:<追加した skill>` が補完に出るか、`claude plugin list` の版（コミット SHA）で確認する。
 
 ## SKILL.md の規約
 
