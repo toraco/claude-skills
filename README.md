@@ -26,6 +26,7 @@ claude-skills/
 | `revise-spec` / `revise-tests` | 仕様書・テストの見直し |
 | `make-plan` / `grilling` | 計画立案・壁打ち |
 | `file-issue` | issue 起票 |
+| `land` | レビュー済み PR のマージ → マージ後 CI（デプロイ）監視 → 動作確認 → 関連 issue のクローズ |
 | `release` / `fix-ci` | リリース・CI 修復 |
 | `garden-deps` | 依存パッケージのガーデニング（Renovate の手動分・管轄外の棚卸しと一括更新） |
 
@@ -83,5 +84,5 @@ claude plugin list | grep -q "toraco@toraco-skills" || \
 ```
 claude plugin validate .
 claude plugin marketplace add toraco/claude-skills && claude plugin install toraco@toraco-skills
-claude plugin details toraco   # Skills (15) と出れば OK
+claude plugin details toraco   # Skills (16) と出れば OK
 ```
