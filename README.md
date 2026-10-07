@@ -65,7 +65,12 @@ claude plugin marketplace list | grep -q toraco-skills || \
   claude plugin marketplace add toraco/claude-skills
 claude plugin list | grep -q "toraco@toraco-skills" || \
   claude plugin install toraco@toraco-skills
+# 導入済みでも毎回最新に追従させる（下記の注意を参照）
+claude plugin marketplace update toraco-skills || true
+claude plugin update toraco@toraco-skills || true
 ```
+
+> **install だけでは更新されない。** plugin はインストール時のコミットで `~/.claude/plugins/cache/` に固定され、クラウド環境はそのキャッシュごと再利用されることがある。`marketplace update` / `plugin update` を書いていないと、skill を追加・修正しても古い版のまま（新しい skill が出てこない）になる。反映されないときはセッション内で上の 2 行を実行し、新しいセッションを開始する（`plugin update` は再起動後に反映）。
 
 ## SKILL.md の規約
 
