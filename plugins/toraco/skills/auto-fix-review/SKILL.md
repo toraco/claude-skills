@@ -1,11 +1,11 @@
 ---
 name: auto-fix-review
-description: PR の Claude Code Review を待ち（自動レビュー未設定のリポジトリでは @claude メンションでレビューを依頼し）、High (🔴) / Medium (🟡) の指摘がなくなるまで /fix-review --yes を自動反復実行する
+description: PR の Claude Code Review を待ち（自動レビュー未設定のリポジトリでは @claude メンションでレビューを依頼し）、High (🔴) / Medium (🟡) の指摘がなくなるまで /fix-review --yes を自動反復実行する。Stacked PRs では上位レイヤーの rebase を最後の 1 回にまとめ、CI の連鎖実行を抑える
 ---
 
 # Auto Fix Review Loop: $ARGUMENTS
 
-**使い方**: `/auto-fix-review [pr-number] [--mode auto|mention] [--max-iterations N] [--wait-minutes N] [--max-reruns N]`
+**使い方**: `/auto-fix-review [pr-number] [--mode auto|mention] [--max-iterations N] [--wait-minutes N] [--max-reruns N] [--stack] [--max-cascades N]`
 
 ## Goal
 
@@ -31,6 +31,21 @@ Claude Code Review が PR に返した **High severity**（`### 🔴 バグ` ま
 本スキル自身が PR に `@claude` メンション付きのレビュー依頼コメントを投稿し、「レビュー依頼 → レビュー待機 →
 /fix-review --yes 実行 → push → 再レビュー依頼」を繰り返す（Step 0-6 でモードを判定し、Step 1-R で依頼する）。
 
+対象 PR が GitHub の **Stacked PRs**（`main ← PR-A ← PR-B ← PR-C` のように各 PR が 1 つ下の PR のブランチを
+base にする連なり）の一員である場合は、**修正ループ中に上位レイヤーを rebase しない**（Step 0-8・Step S）。
+Stacked PRs では workflow が「全 PR が stack の base（例: `main`）を向いている」ものとして起動するため、
+`pull_request` トリガの CI と Claude review は**全レイヤーで**走る。下位レイヤー A を修正するたびに B・C を
+rebase して force push すると、修正の反復回数 × 上位レイヤー数だけ CI とレビューが走ってしまう。
+一方、A に通常の push をしても B・C の head は変わらないので、B・C を rebase して push しない限り
+B・C の CI は起動しない。そこで本スキルは次のように動く:
+
+- 各レイヤーの修正ループでは**そのレイヤーのブランチにだけ** fast-forward で push する
+  （上位の rebase・force push・`gh stack sync` / `rebase` / `push`・UI の **Rebase Stack** はしない）
+- 全レイヤーの指摘が解消した後、上位レイヤーの rebase（以下 **cascade**）を **1 回だけ**まとめて行う（`--stack` 指定時。Step S-3）
+
+マージには全レイヤーで線形履歴と最終 head での required checks の pass が必要なので、上位レイヤーの CI は
+最後の cascade の後に 1 回は必ず走る。本スキルが減らすのはそれ以外の、反復のたびに起きる連鎖実行である。
+
 これは `/goal` 的な完了条件ドリブンのループであり、本スキルが起動された時点で
 ユーザー追加入力なしに完了条件まで走り切ることが期待される。
 
@@ -47,6 +62,12 @@ Claude Code Review が PR に返した **High severity**（`### 🔴 バグ` ま
 - `--max-reruns N`: 1 回のレビュー待機あたりの review workflow 再実行回数の上限（default 2。
   workflow の初回実行と合わせて最大 3 回まで実行されることになる）。`0` を指定すると rerun 機構を無効化する。
   mention モードでは「レビュー依頼コメントの再投稿」回数の上限として扱う
+- `--stack`: 対象 PR が Stacked PRs の一員のとき、**stack 内の未マージ PR を下から順に全て**処理し、
+  最後に cascade を 1 回行う（Step S）。他のセッションで各レイヤーを個別に修正し終えた後に、
+  cascade とその後の確認だけを行う用途にも使える（修正済みのレイヤーは Step 1-1 で即 A 判定になる）。
+  stack に属さない PR に付けた場合は無視する
+- `--max-cascades N`: `--stack` 時の cascade 回数の上限（default 2。最初の cascade 1 回 +
+  cascade 後のレビューで出た指摘を直した後の 1 回）。`--max-iterations` はレイヤーごとに数える
 
 ## Completion conditions (いずれか満たした時点で終了)
 
@@ -62,6 +83,14 @@ Claude Code Review が PR に返した **High severity**（`### 🔴 バグ` ま
   rerun 上限（`--max-reruns`）に到達した（mention モードでは依頼の再投稿上限に到達した）
 - **G. NO_REVIEWER**: 自動レビューも `@claude` メンション応答も利用できないと判断した
   （Step 0-6 で `REVIEW_MODE = none` となった場合）
+- **H. CASCADE_CONFLICT**: `--stack` の cascade（Step S-3）で rebase conflict が起き、安全に解消できなかった
+  （rebase は abort して元の状態に戻す）
+- **I. CASCADE_LIMIT**: `--stack` で cascade 回数が `--max-cascades` に達しても、rebase が必要なレイヤーが残った
+
+`--stack` では A〜G をレイヤーごとに判定する。どのレイヤーも A になり、最後の cascade の後に rebase が
+必要なレイヤーが残っていなければ stack 全体として A とする。A 以外で止まったレイヤーがあれば、そのレイヤーの
+ステータスを stack 全体の終了ステータスとし、それより上のレイヤーは処理せずに Step 5 へ進む
+（下位レイヤーが未完のまま上位を直しても、後で cascade と再レビューが必要になるため）。
 
 ## Steps (obey strictly)
 
@@ -122,6 +151,36 @@ Claude Code Review が PR に返した **High severity**（`### 🔴 バグ` ま
    のコメントだけを読むため）。レビュー応答が別の login（`github-actions` 等）で投稿された場合（Step 1-3 の mention 手順 6 で検出）は、
    `/fix-review` がそれを読めないので **D (ERROR)** で終了し、workflow が Claude GitHub App の token で
    投稿するよう設定されているか確認を促す。
+8. **Stacked PRs の判定**: PR の `stack` オブジェクトを取得する（stack に属さない PR では `null`。
+   リポジトリで Stacked PRs が有効でない場合も `null` になるか、フィールド自体が無い）:
+   ```bash
+   gh api "repos/{owner}/{repo}/pulls/<pr>" --jq '.stack'
+   # => {"number": 50, "size": 3, "position": 2, "base": {"ref": "main", ...}, ...}
+   ```
+   - `null` / 空 → `STACKED = false`。以降は従来どおり 1 PR だけを処理する（`--stack` は無視する）
+   - 値がある → `STACKED = true`。stack を構成する PR を下から順に取得する:
+     ```bash
+     gh api "repos/{owner}/{repo}/stacks?pull_request=<pr>" \
+       --jq '.[0].pull_requests[] | select(.state == "open") | {number, ref: .head.ref, sha: .head.sha}'
+     ```
+     `pull_requests` は stack の下（trunk 側）から上の順に並ぶ。マージ済みの PR は除外し、残った列を
+     `LAYERS`、対象 PR の位置を `self_index` とする。stack の base ref（`stack.base.ref`）を `TRUNK` として保持する。
+     Stacks API が 404 を返す・取得に失敗する場合は、各 PR の `baseRefName` → 1 つ下の PR の `headRefName` を
+     たどって `LAYERS` を組み立てる
+   - `STACKED = true` の間は、Safety notes の「Stacked PRs で禁止する操作」を守る
+   - `STACKED = true` かつ `--stack` 指定なし → **単一レイヤーモード**。対象 PR だけを Step 1〜4 で処理し、
+     上位レイヤーには一切触れない。終了時、Step 5 で「上位レイヤーの rebase が保留になっていること」と
+     その解消方法を案内する
+   - `STACKED = true` かつ `--stack` 指定あり → **stack モード**。Step 1 へは進まず **Step S** へ進む
+9. **作業ツリーを対象 PR の head に合わせる**（`/fix-review` は current branch に commit して push するため）。
+   current branch が既に対象 PR の head で origin と一致していれば何もしない。切り替えが必要なときだけ:
+   ```bash
+   git status --porcelain      # 空でなければ D (ERROR)。勝手に stash しない
+   git fetch origin <headRefName>
+   git checkout <headRefName>
+   git merge --ff-only "origin/<headRefName>"   # 失敗（ローカルが分岐している）なら D (ERROR)
+   ```
+   stack モードでは Step S-2 がレイヤーごとにこの手順を行う。
 
 ### Step 1 (loop entry): 最新レビュー取得
 
@@ -136,6 +195,10 @@ Claude Code Review が PR に返した **High severity**（`### 🔴 バグ` ま
 
 判定:
 
+- stack モードで、cascade の push 直後のレイヤーを処理している（Step S-3 の 7. で `await_new_review = true` が
+  立っている）場合は、既存レビューを評価対象にせず、Step S-3 で控えた `baseline_ts` を使って
+  Step 1-2 の待機ループへ進む（cascade 後のコードに対するレビューを待つため）。
+  mention モードでは Step 1-R でレビューを依頼してから Step 1-2 へ進む
 - もし `iteration == 0` かつ既存レビュー（集約コメントまたは review thread のいずれか）があれば、
   それを今回の評価対象として Step 2 へ進む。
   - ただし `REVIEW_MODE == mention` の場合は、既存レビューが **PR の head commit より新しい**ときだけ評価対象とする
@@ -310,7 +373,11 @@ Step 0-6 で rerun 機構が無効化されている場合、または `--max-re
 
 - `Skill` ツールで `fix-review` を呼び出す:
   - `args` には `<pr-number> --yes` を渡す（pr-number は Step 0 で確定したもの）
+- 実行前に、current branch が対象 PR の `headRefName` であることを確認する（Step 0-9。stack モードでは
+  レイヤーを切り替えるたびに確認が必要）。違っていれば Step 0-9 の手順で切り替える。
 - `/fix-review --yes` は内部で修正・commit・push を完了する想定。
+  `STACKED = true` でも push は current branch への fast-forward push だけで、上位レイヤーには触れない
+  （`/fix-review` Step 7 の注記を参照）。
   インラインコメント型の指摘については、対応したスレッドへの返信と、修正済みスレッドの
   Resolve conversation も `/fix-review` Step 8 が実施する。
 - `/fix-review` の出力から「返信件数 / Resolve 件数 / `wontfix` として返信のみ行った件数」を
@@ -342,11 +409,102 @@ Step 0-6 で rerun 機構が無効化されている場合、または `--max-re
     2 回連続検出）で **E (NOT_CONVERGED)** に倒れ、人間の判断に委ねられる。
   - Step 1 に戻る（mention モードでは Step 1-1 から Step 1-R に進み、修正後の差分に対するレビューを改めて依頼する）
 
+### Step S: Stacked PRs の一括処理（stack モードのみ）
+
+`STACKED = true` かつ `--stack` 指定時に、Step 1〜4 をレイヤーごとに実行し、cascade は最後にまとめて行う。
+修正のたびに上位を rebase すると、修正の反復回数 × 上位レイヤー数だけ CI が走る。最後に 1 回だけ
+rebase すれば、上位レイヤーで走るのは cascade 後の 1 回と、自分自身の修正 push の分だけになる。
+
+#### Step S-1: 初期化
+
+- `cascade_count = 0`
+- 処理対象のレイヤー集合 `TARGETS = LAYERS`（Step 0-8 で取得した未マージ PR 全て。下から順）
+- `await_new_review` は全レイヤーで `false`
+- レイヤーごとの記録（Step 5 のレポート用）: 終了ステータス、反復回数、修正した issue、rerun 回数、
+  依頼コメント数、cascade で rebase された回数
+
+#### Step S-2: 各レイヤーの修正ループ（下から順に）
+
+`TARGETS` のレイヤーを**下から順に**処理する。レイヤーごとに:
+
+1. Step 0-9 の手順で作業ツリーをそのレイヤーの head に切り替える
+2. `iteration` / `rerun_count` / `baseline_ts`（Step 0-4 と同じ手順で再取得。ただし `await_new_review = true`
+   のレイヤーは Step S-3 で控えた値を使う）/ 収束チェック用の issue 集合を、そのレイヤー用に初期化する。
+   `rerun_total` / `requests_total` は stack 全体で累計する
+3. Step 1〜4 を実行する。完了条件 A〜G はレイヤー単位で判定し、A なら次のレイヤーへ進む。
+   Step 1-1 で cascade 後のレビュー待ちに入ったら、そのレイヤーの `await_new_review` は `false` に戻す
+4. A 以外で終わったら、そのステータスを stack 全体の終了ステータスとして **Step 5** へ進む
+   （上のレイヤーは処理しない。理由は Completion conditions 末尾を参照）
+
+このステップでは**下位レイヤーに push しても上位レイヤーを rebase しない**。上位レイヤーは古い下位レイヤーの上に
+乗ったまま（`needsRebase` の状態）になるが、レビューは各 PR のレイヤー単位の差分に対して行われるので、
+修正ループには支障がない。
+
+#### Step S-3: cascade（上位レイヤーの rebase を 1 回にまとめて行う）
+
+1. **rebase が必要なレイヤーを特定する**: `LAYERS` の 2 番目以降で、1 つ下のレイヤーの最新 head が
+   祖先に含まれていないものを集め、`R` とする:
+   ```bash
+   git fetch origin <全レイヤーの headRefName>
+   git merge-base --is-ancestor "origin/<下のレイヤー>" "origin/<このレイヤー>" || echo needs-rebase
+   ```
+   `gh stack` が使える場合は `gh stack view --json` の `branches[].needsRebase` でもよい。
+   - `R` が空 → stack 全体として **A (SUCCESS)**。Step 5 へ
+2. `cascade_count += 1`。`cascade_count > max-cascades` なら **I (CASCADE_LIMIT)** で Step 5 へ
+   （rebase が必要なレイヤーを列挙し、手動で 1 回 rebase するコマンドを案内する）
+3. `R` の各レイヤーについて、push 前に `baseline_ts`（Step 0-4 と同じ手順）と、rebase 前の head SHA
+   `pre_sha` を控える
+4. **rebase する**。trunk は取り込まない（取り込むと最下層のレイヤーまで head が変わり、CI が走るため）。
+   trunk の取り込みが必要（最下層が trunk と conflict している、ブランチ保護で最新化が必須 等）な場合だけ
+   trunk 込みで rebase し、その旨をレポートに書く。
+   - `gh stack` が使える場合（`gh stack --help` が成功する）:
+     ```bash
+     gh stack checkout <最下層の PR 番号>   # ローカルで stack を追跡していなければ GitHub から取り込む
+     gh stack rebase --no-trunk             # trunk 込みにする場合は --no-trunk を外す
+     ```
+     終了コード 3（rebase conflict）の場合は下記 6. へ
+   - 使えない場合は、各レイヤーのローカルブランチを `origin` の head に合わせたうえで（Step 0-9 と同じ手順）、
+     下から順に `--onto` で rebase する。修正で下のレイヤーに commit が増えているので、
+     「1 つ下のレイヤーの **rebase 前**の head」との merge-base を upstream にする
+     （素の `git rebase <下のレイヤー>` だと、下のレイヤーが rebase で書き換わった場合に同じ commit が二重に適用される）:
+     ```bash
+     # i = 2..n（下から順）。prev_pre_sha は 1 つ下のレイヤーの rebase 前 head（origin の値）
+     UPSTREAM=$(git merge-base "<layer_i>" "<prev_pre_sha>")
+     git rebase --onto "<layer_(i-1) の rebase 後 head>" "$UPSTREAM" "<layer_i>"
+     ```
+5. **push する**。rebase したレイヤーだけを `--force-with-lease` で push する:
+   ```bash
+   gh stack push      # gh stack を使った場合。rebase していないブランチは更新されない
+   # 使っていない場合:
+   git push --force-with-lease="<layer_i>:<pre_sha_i>" origin "<layer_i>"   # R の各レイヤー
+   ```
+   push の拒否（lease 失敗 = 他者が push している）は **D (ERROR)** とし、取り込まずに停止する
+6. **rebase conflict の場合**: 下のレイヤーでの修正と上のレイヤーの変更が同じ箇所に触れていることが多い。
+   両方の意図を保ったまま解消できることが差分から明らかな場合に限り解消し、`/fix-review` Step 5 と同じ
+   プロジェクトのチェックを通してから続行する（`gh stack rebase --continue` / `git rebase --continue`）。
+   どちらかの挙動を捨てないと解消できない、またはチェックが通らない場合は、`gh stack rebase --abort` /
+   `git rebase --abort` で**全レイヤーを rebase 前に戻し**（push はしていない状態）、**H (CASCADE_CONFLICT)** で Step 5 へ
+7. 次のラウンドの準備をする:
+   - `R` の各レイヤーについて、cascade の前後でレイヤー単位の差分が変わったかを確認する:
+     ```bash
+     git range-diff "<prev_pre_sha>..<pre_sha_i>" "<layer_(i-1) の新 head>..<layer_i の新 head>"
+     ```
+     全ての commit が `=`（patch 同一）で、conflict の解消もしていないレイヤーは **差分不変**とする
+   - auto モード: `R` の全レイヤーで `await_new_review = true`（push で自動レビューが走るので、その結果を確認する）
+   - mention モード: 差分が変わったレイヤーだけ `await_new_review = true` にして再レビューを依頼する。
+     差分不変のレイヤーは、直前のレビューが同じ差分に対するものなので再依頼せず、処理済み（A）として扱う
+     （依頼コメントと応答 workflow の実行を 1 回分節約する）
+   - `TARGETS = await_new_review が true のレイヤー`。空なら Step S-3 の 1. に戻る（通常は `R` が空になり A で終わる）。
+     空でなければ **Step S-2** に戻る
+
+Step S-2 で修正が入らなかったレイヤーの上には rebase が要らないので、ラウンドを重ねるごとに `R` は小さくなる。
+cascade 後のレビューで指摘が出て修正したときだけ、そのレイヤーより上でもう 1 回 cascade が必要になる。
+
 ### Step 5: 最終レポート
 
 終了時に以下を表示する:
 
-- 終了ステータス（A / B / C / D / E / F / G）
+- 終了ステータス（A / B / C / D / E / F / G / H / I）
 - レビューモード（`auto` / `mention`）と判定根拠（`--mode` 指定 / 検出した workflow 名 / auto からのフォールバック）。
   mention モードの場合は投稿したレビュー依頼コメントの件数 `requests_total`
 - 実行した反復回数
@@ -358,7 +516,20 @@ Step 0-6 で rerun 機構が無効化されている場合、または `--max-re
   rerun 機構が無効化されていた場合（Step 0-6 で workflow を特定できなかった / `--max-reruns 0`）はその旨
 - 未解消で残った High / Medium 指摘（B / C / E で終了した場合。元コメントの表記 🔴/🟡 か High/Medium かはそのまま反映）
   - 未解決のまま残った review thread は `path:line` を併記する
+- **Stacked PRs の場合**（`STACKED = true`）:
+  - stack の構成（下から順の PR 番号とブランチ）と処理したモード（単一レイヤー / stack）
+  - stack モード: レイヤーごとの終了ステータス・反復回数・修正件数、cascade 回数 `cascade_count`、
+    各 cascade で rebase したレイヤー、差分不変として再レビューを省いたレイヤー、trunk を取り込んだかどうか
+  - 単一レイヤーモード: 対象 PR より上で rebase が必要になったレイヤー（Step S-3 の 1. と同じ判定）。
+    全レイヤーの修正が終わってから 1 回だけ cascade するよう、次のどちらかを案内する
+    - `/auto-fix-review <いずれかのレイヤーの PR 番号> --stack`（修正済みのレイヤーは即 A になり、cascade と確認だけが行われる）
+    - 手動なら `gh stack rebase --no-trunk && gh stack push`、または UI の **Rebase Stack** ボタンを**最後に 1 回だけ**
+  - マージの案内: 上位レイヤーまでまとめてマージする（`gh stack merge <最上位の PR 番号>` / `/land`）。
+    下位だけを先にマージすると、残りのレイヤーで GitHub が自動で cascade rebase を行い、CI がもう 1 回走る
 - 次にユーザーが取るべきアクション（手動レビュー、再実行など）
+  - **H (CASCADE_CONFLICT)** の場合は、conflict したレイヤーとファイル、全レイヤーを rebase 前に戻したことを報告し、
+    `gh stack rebase` で手動解消してから `gh stack push` するよう案内する
+  - **I (CASCADE_LIMIT)** の場合は、rebase が必要なまま残ったレイヤーを列挙し、手動で 1 回 cascade するよう案内する
   - **G (NO_REVIEWER)** の場合は、Claude の自動レビュー workflow（`pull_request` トリガ）または `@claude` メンションに
     応答する workflow（`issue_comment` トリガ）の導入を案内する（例: Claude Code の `/install-github-app`）
   - **F (REVIEW_MISSING)** の場合は、workflow 側の調査を促す: 該当 run のログ確認
@@ -366,6 +537,23 @@ Step 0-6 で rerun 機構が無効化されている場合、または `--max-re
     `anthropics/claude-code-action` のバージョンや設定変更の有無
 
 ## Safety notes
+
+- **Stacked PRs で禁止する操作**（`STACKED = true` の間。Step S-3 の cascade を除く）:
+  上位レイヤーの rebase、force push、`gh stack sync` / `gh stack rebase` / `gh stack push`、
+  UI の **Rebase Stack** ボタン、`gh pr update-branch`。いずれも上位レイヤーの head を変えて CI とレビューを
+  連鎖的に起動する。特に `gh stack sync` は trunk が進んでいると、自動で rebase して全レイヤーを push する。
+  単一レイヤーモードでは、対象 PR 自身が下位の変更を取り込めていない（`needsRebase`）場合も rebase しない
+- 他のセッションで別レイヤーを並行して `/auto-fix-review` している場合でも、単一レイヤーモードならお互いの
+  ブランチに触れないので安全に並行できる。cascade はその全てが終わってから `--stack` で 1 回だけ行う
+- レビュー指摘の修正先が、そのレイヤーではなく下位レイヤーのコードである場合（例: B のレビューで A が追加した
+  関数の不具合を指摘された）でも、本スキルは対象レイヤーにだけ修正を commit する。下位に入れるべき修正なら
+  `wontfix` として返信し、どのレイヤーに入れるべきかをレポートに書く（勝手に下位レイヤーへ commit すると、
+  そのレイヤーの再レビューと cascade が増える）
+- CI の実行量をさらに減らしたい場合は、リポジトリ側の workflow で stack の情報を使って重いジョブを絞れる
+  （`github.event.pull_request.stack.position == github.event.pull_request.stack.size` で最上位 PR のみ、
+  `github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref` で最下層の未マージ PR のみ）。
+  ただし required checks に指定されたジョブを絞ると、該当しないレイヤーがマージできなくなる。
+  本スキルは workflow を変更しない。必要ならレポートで提案するに留める
 
 - 同じ issue が複数反復で繰り返し検出される場合（= 修正が効いていない or レビュアーの観点が新たに広がっている）、
   Step 3 完了時に「直前ターンの修正対象 issue 一覧」と今回の一覧を比較する

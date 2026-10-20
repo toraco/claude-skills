@@ -146,6 +146,10 @@ Print a summary of:
   1. 変更ファイルを `git add` でステージング
   2. プロジェクトの commit 規約（`git log --oneline -10` で検出）に従ったメッセージで commit を作成
   3. `git push` でリモートに push
+     - PR が GitHub の Stacked PRs の一員でも（`gh api "repos/{owner}/{repo}/pulls/<pr>" --jq '.stack'` が `null` でない）、
+       ここで行うのは current branch の通常の push（fast-forward）だけにする。上位レイヤーの rebase、force push、
+       `gh stack sync` / `rebase` / `push` はしない。上位レイヤーの head が変わると、その全てで CI とレビューが
+       走り直すため。上位レイヤーの rebase は `/auto-fix-review --stack` が最後にまとめて行う
   4. `git rev-parse --short HEAD` で修正コミットの短縮 hash を控える（Step 8 の返信で使う）
 - N(o) の場合: commit/push せずに終了する（Step 8 も実行しない）。
 
