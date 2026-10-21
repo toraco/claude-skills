@@ -85,6 +85,34 @@ set -e
 >
 > 反映されたかは `/toraco:<追加した skill>` が補完に出るか、`claude plugin list` の版（コミット SHA）で確認する。
 
+#### gh-stack（Stacked PRs）
+
+`auto-fix-review` などは [`gh stack`](https://github.com/github/gh-stack) があれば使う。クラウドセッションでは `gh extension install github/gh-stack` が 403 で失敗する（gh の API がセッションにアタッチされたリポジトリに限定されるため）。代わりに Go module proxy からビルドして gh の extension ディレクトリに置く。Setup script に追記する:
+
+```bash
+# --- gh-stack ---
+# クラウドでは gh extension install が使えないため、proxy.golang.org からビルドして置く。
+# スナップショット再構築のたびに最新版でビルドし直す（初回は 1 分弱かかる）。
+set +e
+GH_STACK_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/gh/extensions/gh-stack"
+GH_STACK_TMP="$(mktemp -d)"
+if GOBIN="$GH_STACK_TMP" go install github.com/github/gh-stack@latest; then
+  mkdir -p "$GH_STACK_DIR" && install -m 755 "$GH_STACK_TMP/gh-stack" "$GH_STACK_DIR/gh-stack"
+fi
+rm -rf "$GH_STACK_TMP"
+set -e
+```
+
+`gh extension list` に `gh stack` が出れば導入済み（ソースビルドなので `gh stack --version` は `dev` になる）。
+
+> **クラウドでは一部のコマンドしか動かない。** クラウドの gh は GraphQL API が使えない。gh-stack は stack の操作に REST API を使うが、PR の検索・作成・タイトル取得は GraphQL なので、次のように分かれる。
+>
+> | 動く | 動かない（GraphQL が必要） |
+> |---|---|
+> | `init` / `add` / `modify` / `rebase` / `push` / `up` / `down` / `top` / `bottom` / `trunk` / `switch`、`view`（PR 情報は空になる。`needsRebase` などローカルで決まる値は出る） | `submit` / `link` / `merge` / `checkout`（GitHub から stack を取り込む場合） / `sync` の PR 同期 |
+>
+> PR の作成やマージは GitHub MCP ツール（`mcp__github__*`）で行う。GitHub 上の stack は `gh api "repos/<owner>/<repo>/stacks?pull_request=<PR 番号>"` で取れ、各 PR の head ブランチを fetch してから `gh stack init --base <trunk> <下から順のブランチ...>` すれば、ローカルでの追跡を始められる（`checkout` の代わり）。
+
 ## SKILL.md の規約
 
 - **frontmatter は Agent Skills spec の 6 キーに絞る**: `name` / `description` / `license` / `compatibility` / `metadata` / `allowed-tools`。plugin 経由の配布では Claude Code 固有キー（`argument-hint` / `disable-model-invocation` など）も使えるが、claude.ai へのアップロード経路と共用できるよう spec に寄せてある。

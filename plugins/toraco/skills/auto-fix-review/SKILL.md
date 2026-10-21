@@ -462,6 +462,8 @@ rebase すれば、上位レイヤーで走るのは cascade 後の 1 回と、�
      gh stack checkout <最下層の PR 番号>   # ローカルで stack を追跡していなければ GitHub から取り込む
      gh stack rebase --no-trunk             # trunk 込みにする場合は --no-trunk を外す
      ```
+     クラウドセッションでは GraphQL が使えず `gh stack checkout` が失敗するので、各レイヤーのローカルブランチを
+     `origin` の head に合わせたうえで `gh stack init --base <trunk> <LAYERS の headRefName（下から順）>` で追跡を始める
      終了コード 3（rebase conflict）の場合は下記 6. へ
    - 使えない場合は、各レイヤーのローカルブランチを `origin` の head に合わせたうえで（Step 0-9 と同じ手順）、
      下から順に `--onto` で rebase する。修正で下のレイヤーに commit が増えているので、
