@@ -11,6 +11,7 @@ claude-skills/
 ├── .claude-plugin/marketplace.json   # marketplace: toraco-skills
 └── plugins/toraco/
     ├── .claude-plugin/plugin.json    # plugin: toraco
+    ├── hooks/                        # plugin 同梱の hooks（plugin を有効にすると自動で効く）
     └── skills/
         ├── _shared/                  # 複数 skill から参照する共通ドキュメント（skill としては発動しない）
         └── <skill-name>/SKILL.md
@@ -112,6 +113,23 @@ set -e
 > | `init` / `add` / `modify` / `rebase` / `push` / `up` / `down` / `top` / `bottom` / `trunk` / `switch`、`view`（PR 情報は空になる。`needsRebase` などローカルで決まる値は出る） | `submit` / `link` / `merge` / `checkout`（GitHub から stack を取り込む場合） / `sync` の PR 同期 |
 >
 > PR の作成やマージは GitHub MCP ツール（`mcp__github__*`）で行う。GitHub 上の stack は `gh api "repos/<owner>/<repo>/stacks?pull_request=<PR 番号>"` で取れ、各 PR の head ブランチを fetch してから `gh stack init --base <trunk> <下から順のブランチ...>` すれば、ローカルでの追跡を始められる（`checkout` の代わり）。
+
+## 同梱 hooks
+
+| hook | 内容 |
+|---|---|
+| `pr-review-submit-guard.sh` (PreToolUse) | PR レビューの submit を止め、pending review（下書き）の作成までに留める。submit は本人が GitHub 上で確認してから行う |
+
+`pr-review-submit-guard.sh` が止める操作と通す操作は次のとおり。
+
+| 止める | 通す |
+|---|---|
+| GitHub MCP の `pull_request_review_write`（`submit_pending`、または `create` に `event` 付き） | `pull_request_review_write` の `create`（`event` なし）・`delete_pending`・`resolve_thread` / `unresolve_thread` |
+| `gh pr review` | `add_comment_to_pending_review`（下書きへのコメント追加） |
+| `gh api` / `curl` での `pulls/{n}/reviews`（`event` 付き）・`reviews/{id}/events`・GraphQL の `submitPullRequestReview` / `event` 付き `addPullRequestReview` | 既存スレッドへの返信（`add_reply_to_pull_request_comment`、`comments/{id}/replies`） |
+| `gh api` での `pulls/{n}/comments` への単独の行コメント作成（即時公開されるため） | PR 本体への通常コメント（`add_issue_comment`） |
+
+hook は plugin に入っているので、ローカルでもクラウドセッションでも toraco plugin が有効なら効く。コマンド文字列での判定なので、`--input` で渡した JSON ファイルの中身までは見ない。
 
 ## SKILL.md の規約
 
