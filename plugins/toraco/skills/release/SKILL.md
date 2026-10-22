@@ -1,15 +1,15 @@
 ---
 name: release
-description: 統合ブランチ(既定 develop)の内容を本番ブランチ(既定 main)へ反映する。収録範囲の確定 → release ブランチと PR 作成 → CI 確認 → マージ → 本番デプロイ CI 監視 → back-merge・後片付けまでをカバーする。自動起動はせず、ユーザーが明示的に指示したときだけ使う。
+description: 統合ブランチ(既定 develop)の内容を本番ブランチ(既定 main)へ反映する。収録範囲の確定 → release ブランチと PR 作成 → CI 確認 → マージ → 本番デプロイ CI 監視 → Semantic Versioning に基づくリリースタグ付与 → back-merge・後片付けまでをカバーする。自動起動はせず、ユーザーが明示的に指示したときだけ使う。
 ---
 
 # Release: $ARGUMENTS
 
-**使い方**: `/release [--until=pr|merge|deploy|backmerge] [--exclude=<#PR|#issue|...>] [--from=develop] [--to=main] [context]`
+**使い方**: `/release [--until=pr|merge|deploy|tag|backmerge] [--exclude=<#PR|#issue|...>] [--version=<X.Y.Z>] [--no-tag] [--from=develop] [--to=main] [context]`
 
 ## Goal
 
-統合ブランチに溜まった変更を「収録範囲が確定し、リリースブランチと PR になり、CI を通ってマージされ、本番デプロイが成功したことまで確認された」状態にする。
+統合ブランチに溜まった変更を「収録範囲が確定し、リリースブランチと PR になり、CI を通ってマージされ、本番デプロイが成功したことまで確認され、[Semantic Versioning 2.0.0](https://semver.org/lang/ja/) に基づくリリースタグが打たれた」状態にする。
 
 これまで「develop から main へリリースする release ブランチと PR を作成して。ci が通ったらマージして prod デプロイ ci を確認」とフリーテキストで毎回依頼していた定型フローの置き換え。複数のリポジトリで手順がほぼ共通。
 
@@ -21,6 +21,7 @@ description: 統合ブランチ(既定 develop)の内容を本番ブランチ(�
 - 一部の PR / issue の変更だけを除外して出したいとき（`--exclude`）
 - リリース PR だけ先に作っておきたいとき（`--until=pr`）
 - 既に作った PR のマージ以降（デプロイ監視・back-merge）だけ進めたいとき（`--until=deploy` 等で再入）
+- デプロイ済みのリリースにタグだけ打ちたいとき（`--until=tag` で再入。打ち済みなら何もしない）
 - リリース内容の妥当性（何が載るか・DB マイグレーションの有無・prod 側の事前準備）を検査だけしたいとき（`--until=pr` の Step 1 まで）
 
 使わない場面:
@@ -33,13 +34,15 @@ description: 統合ブランチ(既定 develop)の内容を本番ブランチ(�
 
 | 引数 | 既定 | 意味 |
 |---|---|---|
-| `--until=pr\|merge\|deploy\|backmerge` | `deploy` | どこまで進めるか。`pr`=PR 作成まで / `merge`=マージまで / `deploy`=本番デプロイ CI 確認まで / `backmerge`=back-merge と後片付けまで |
+| `--until=pr\|merge\|deploy\|tag\|backmerge` | `tag` | どこまで進めるか。`pr`=PR 作成まで / `merge`=マージまで / `deploy`=本番デプロイ CI 確認まで / `tag`=リリースタグの付与まで / `backmerge`=back-merge と後片付けまで |
 | `--exclude=<#PR\|#issue\|...>` | なし | 収録から除外する PR / issue。指定時は Mode B（選択的 cherry-pick）になる |
+| `--version=<X.Y.Z>` | 自動判定 | リリースバージョンを明示する。指定時も Step 1 で直前のタグより大きいことと、判定結果との食い違いを確認する |
+| `--no-tag` | なし | タグを打たない（タグ運用をしていないリポジトリ用）。`--until=tag` の意味は `deploy` と同じになる |
 | `--from` | `develop` | リリース元の統合ブランチ |
 | `--to` | `main` | リリース先の本番ブランチ |
 | `context` | なし | リリース PR の description に反映する補足（対象 issue・背景・注意事項など） |
 
-既定は `deploy`。**無指定でもマージして本番に出るところまで進む**ので、Step 1 の収録一覧の確認と Step 5 のマージ前の確認が、本番へ出る前の唯一のユーザーゲートになる。この 2 つは `--until` の指定に関わらず必ず行う。
+既定は `tag`。**無指定でもマージして本番に出て、タグを push するところまで進む**ので、Step 1 の収録一覧の確認と Step 5 のマージ前の確認が、本番へ出る前の唯一のユーザーゲートになる。この 2 つは `--until` の指定に関わらず必ず行う。
 
 フリーテキストで「ci が通ったらマージして prod デプロイ ci を確認」のように依頼された場合は、対応する `--until` として解釈する。PR だけ作って止めたい旨が読み取れる場合は `--until=pr` として扱う。
 
@@ -54,6 +57,11 @@ description: 統合ブランチ(既定 develop)の内容を本番ブランチ(�
 - プロジェクト memory `~/.claude/projects/<slug>/memory/` に `project_release_*` があれば読む。`<slug>` は**リポジトリの絶対パスの `/` と `.` を `-` に置換**したもの（`/Users/me/dev/widget` → `-Users-me-dev-widget`）。`ls ~/.claude/projects/ | grep <リポジトリ名>` で確認できる。**リポジトリ固有の落とし穴（lockfile 競合の解消手順・back-merge 方針・マージ方式の制約）はここに蓄積されている**
 - `CLAUDE.md` / `.github/PULL_REQUEST_TEMPLATE.md` / `.github/workflows/` を確認し、**どの workflow が本番デプロイか**、**DB マイグレーションがどこで適用されるか**（CI か、コンテナ起動時の entrypoint か）を特定する
 - ブランチ保護 / ruleset / auto-merge の設定（`gh pr view` の `autoMergeRequest`、`gh api repos/{owner}/{repo}/rulesets`）
+- **バージョンタグの慣例**（Step 1 のバージョン判定と Step 7 で使う）:
+  - 既存タグ: `git tag --merged origin/<to> | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -5`。`v` prefix の有無を踏襲する。プレリリース（`-rc.1` 等）は直前の版の判定から除く
+  - GitHub Releases を作っているか（`gh release list --limit 5`）、注釈付きタグか軽量タグか（`git cat-file -t <tag>`）
+  - **タグ push をトリガーにする workflow** が無いか（`.github/workflows/` の `on: push: tags` / `on: release`）。あればタグ付与で何が走るか（本番デプロイの二重実行・パッケージ公開など）を把握しておく
+  - `package.json` の `version` 等、ファイル側でバージョンを管理していてタグと揃えているか（過去のリリース PR で bump コミットが入っているか）
 
 ### Step 1: 収録範囲の確定（最重要）
 
@@ -71,7 +79,17 @@ description: 統合ブランチ(既定 develop)の内容を本番ブランチ(�
   - **インフラ変更**（`cdk/` `terraform/` `wrangler.toml` 等）とそれに伴う**ダウンタイム**の可能性
   - **環境変数 / Secrets の追加**（prod 側に事前投入が必要なもの。**PR を出す前に**ユーザーへ提示する）
   - 破壊的変更・切り戻しが効かない変更
-- **収録一覧をユーザーに提示して確認を取る**（PR 番号 / issue / 内容 / 上記の注意点の表）。ここを飛ばさない。**これは確認用の表で、PR 本文の表とは別物**（PR 本文の形式は Step 4 に従う）。issue が紐づかない PR は issue 欄を `-` にする
+- **リリースバージョンを判定する**（`--no-tag` 時は省略）。[SemVer 2.0.0](https://semver.org/lang/ja/) の規則で、直前のタグ（Step 0）から次の版を決める:
+  - **MAJOR**: 後方互換性を壊す変更が 1 つでもある（公開 API の削除・シグネチャ変更、クライアントが追従を要する API レスポンスの変更、設定・CLI オプションの廃止など）
+  - **MINOR**: 後方互換性を保った機能追加、または機能の非推奨化がある
+  - **PATCH**: 後方互換性を保ったバグ修正のみ（リファクタ・依存更新・ドキュメントのみもここ）
+  - 上位を上げたら下位は 0 に戻す（`1.4.2` → MINOR → `1.5.0`）
+  - 判定材料は各 PR の内容そのもの。Conventional Commits の `feat` / `fix` / `!` / `BREAKING CHANGE`、gitmoji の `:boom:` / `:sparkles:` / `:bug:`、PR ラベルは手がかりに使うが、**prefix だけで決めない**（`:sparkles:` でも中身が破壊的変更のことがある）
+  - **「公開 API」が何かをリポジトリごとに決める**。ライブラリなら export、Web アプリなら外部から叩かれる HTTP API・Webhook・連携先との契約。内部実装や DB スキーマの変更だけでは MAJOR にしない。前例（過去のタグ付けで何を MAJOR としたか）があれば踏襲する
+  - **メジャーバージョンが 0（`0.y.z`）の間**は開発初期扱い。破壊的変更は MINOR、それ以外は PATCH を上げる（前例があればそちらに従う）
+  - **既存タグが 1 つも無い**場合は版を推測で決めず、初回の版をユーザーに尋ねる。本番で使われているなら `1.0.0`、まだ開発初期なら `0.1.0` を提案する（SemVer の FAQ に従う）
+  - `--version` 指定時は、直前のタグより大きいこと・判定結果と食い違わないこと（破壊的変更があるのに PATCH 等）を確認し、食い違えば指摘する
+- **収録一覧をユーザーに提示して確認を取る**（PR 番号 / issue / 内容 / 上記の注意点の表 + **リリースバージョンとその判定理由**）。ここを飛ばさない。**これは確認用の表で、PR 本文の表とは別物**（PR 本文の形式は Step 4 に従う）。issue が紐づかない PR は issue 欄を `-` にする
 - `--exclude` 指定時: 除外対象のコミットを特定し、**依存関係**を確認する（除外対象に依存する後続 PR がないか）。見るのは 3 種類:
   - **コード依存**: 除外対象が追加した識別子 / ファイルを後続が参照していないか（`git grep -l <識別子> origin/<from>`）
   - **データ依存**: 除外対象のマイグレーションが作るカラム / テーブルを後続が読み書きしていないか
@@ -107,6 +125,7 @@ description: 統合ブランチ(既定 develop)の内容を本番ブランチ(�
 - `git merge-tree --write-tree origin/<to> HEAD` で**マージ前に**コンフリクト有無を確認する
 - **lockfile（`pnpm-lock.yaml` / `yarn.lock` / `package-lock.json`）の競合は手マージしない**。`git checkout --ours <lockfile>` で release 側（= いま居るブランチ = `HEAD` 側。cherry-pick でも merge でも `--ours` が release ブランチ側）を採用 → `pnpm install --lockfile-only` 等で再生成 → `git add`
 - `package.json` など**手書きの依存定義が同時にコンフリクトしたら、そちらを先に手で正しくマージしてから** lockfile を再生成する。両側の依存の**和集合**になっているか確認する（片側を捨てると、そこから再生成した lockfile ごと壊れる）。**同じパッケージで版が食い違うときは `<to>` 側の版を採る**（`<to>` の版は既に本番で動いており、hotfix のセキュリティ更新を巻き戻さないため）
+- Step 0 でファイル側のバージョン（`package.json` の `version` 等）をタグと揃えている運用が確認できた場合は、ここで bump コミットを積む（`npm version <X.Y.Z> --no-git-tag-version` 等。**タグはここでは打たない**。タグは本番デプロイ成功後の Step 7）。bump コミットを積むと Mode A でも `<from>` と tree が一致しなくなるので、Mode A の「差分ゼロ」確認は bump 対象ファイルを除いて行い、Step 3 のローカル検証は省略しない
 - `git push -u origin release/YYYYMMDD`
 
 ### Step 3: ローカル検証
@@ -122,6 +141,7 @@ Mode B、またはコンフリクト解消・lockfile 再生成をした場合�
 - 本文に必ず含める:
   - **収録した変更**の表（列は過去のリリース PR に合わせる。前例が無ければ PR 番号 / 内容）
   - **DB マイグレーションの有無**（無い場合も「差分なし・no-op」と明記）
+  - **リリースバージョン**（`--no-tag` 時は不要）と判定理由（例: 「v1.5.0（MINOR: #123 で機能追加、破壊的変更なし）」）。タグは本番デプロイ成功後に打つ旨も添える
   - **prod 側の事前準備**（Secrets / 環境変数 / 手動オペ）と**その実施状況**。**自分で実施していないものを「実施済み」と書かない**。未実施なら「要対応（マージ前）」として投入コマンド例を添え、実行はユーザーに委ねる。過去のリリース PR 本文をテンプレとして流用するとき、実施状況の文言まで機械的に踏襲しない
   - **除外したもの**とその理由（Mode B のとき）
   - 切り戻し方針
@@ -146,12 +166,29 @@ Mode B、またはコンフリクト解消・lockfile 再生成をした場合�
   - マイグレーションが適用された / 差分なしで no-op だった
   - デプロイ成果物のバージョン（Worker Version ID、ECS の `rolloutState=COMPLETED`、タスク定義リビジョン等）
 - **失敗した場合**: ログから原因を特定し、①切り戻し（revert PR）② hotfix ③再実行、の選択肢を影響範囲つきで提示して**ユーザーの判断を仰ぐ**。本番に対する回復操作を独断で実行しない
-  - **`--until` の指定に関わらず、失敗時はここで停止する**（`--until=backmerge` でも back-merge へ進まない）
+  - **`--until` の指定に関わらず、失敗時はここで停止する**（タグも打たない。`--until=backmerge` でも back-merge へ進まない）
   - **どのジョブまで進み、どのジョブがスキップされたかを切り分けて報告する**。「マイグレーションだけ適用されてアプリは旧版のまま」のような**中途半端な状態が最も危ない**ので、アプリ側と DB 側を分けて書く
   - マイグレーションが失敗したときは、**本番 DB が今どうなっているかを推定で断定しない**。適用状況を確認する SQL / コマンドを提示し、実行はユーザーに委ねる（Prisma なら `_prisma_migrations` の当該行と、対象スキーマの実体）。**失敗記録が残っている限り次回以降のリリースも同じ所で止まる**ことも併せて伝える
-- `--until=deploy`（既定）ならここで報告して終了
+- `--until=deploy` ならここで報告して終了
 
-### Step 7: back-merge と後片付け
+### Step 7: リリースタグの付与
+
+本番デプロイの成功を Step 6 で確認できたときだけ行う。`--no-tag` 指定時は飛ばす。
+
+- 打つ版は **Step 1 でユーザーが確認した版**。ここで判定し直さない。ただし再入時に Step 1 以降 `<to>` に別のタグが増えていたら（hotfix 等）、その版より大きいかを確かめ、衝突するなら止めて版を相談する
+- 対象は**リリース PR のマージコミット**（`gh pr view <n> --json mergeCommit -q .mergeCommit.oid`）。`<to>` の tip を盲目的に使わない（マージ後に別のコミットが積まれていることがある）
+- 既存の確認: `git ls-remote --tags origin <tag>` と `git tag --points-at <merge-sha>`
+  - 同名タグが**同じコミット**を指している → 打ち済み。何もしない（再入）
+  - 同名タグが**別のコミット**を指している → **止めてユーザーに報告する**。SemVer の規則 3 により、リリース済みの版の内容は変更してはならない。タグの削除・付け替え・force push はしない
+- 付与（Step 0 で確認した慣例に従う。既定は注釈付きタグ）:
+  - `git tag -a <tag> <merge-sha> -F <message-file>`（メッセージはリリース PR 番号と収録 PR の一覧。ファイル経由）
+  - `git push origin <tag>`（**`--tags` で全タグを push しない**。ローカルに残った無関係なタグまで出てしまう）
+  - GitHub Releases を作る運用なら、タグ push 後に `gh release create <tag> --verify-tag --title <tag> --notes-file <path>` で作る（`--verify-tag` で、意図しない軽量タグの自動作成を防ぐ）。ノートは Step 4 の収録表をもとにする
+- タグ push で起動する workflow がある場合（Step 0）は、その run を Step 6 と同じ要領で監視し、結果を報告に含める
+- tag protection / ruleset で push が拒否されたら、**ruleset を変えずに**拒否内容を報告し、ユーザーに判断を仰ぐ
+- `--until=tag`（既定）ならここで報告して終了
+
+### Step 8: back-merge と後片付け
 
 このリポジトリの運用で back-merge を行っているか（Step 0 の memory / 過去 PR）を確認してから実施する。
 
@@ -160,20 +197,21 @@ Mode B、またはコンフリクト解消・lockfile 再生成をした場合�
 - **検証（4 点すべて）**: `git diff origin/<from> HEAD` が 0 行 / `HEAD^{tree}` == `origin/<from>^{tree}` / `origin/<to>` が HEAD の祖先 / 収録ファイル数が想定どおり
 - push して `--base <from>` で PR 作成。ここも **merge commit でマージ**
 - 後片付け: ローカルの release ブランチ削除、`<from>` を pull、`git fetch --prune`
-- リリース内容（日付 / PR 番号 / 収録 PR / 除外 / デプロイ結果 / 遭遇した問題）を `~/.claude/projects/<slug>/memory/project_release_YYYYMMDD.md` に記録し、`MEMORY.md` に 1 行追加する
+- リリース内容（日付 / PR 番号 / バージョン / 収録 PR / 除外 / デプロイ結果 / 遭遇した問題）を `~/.claude/projects/<slug>/memory/project_release_YYYYMMDD.md` に記録し、`MEMORY.md` に 1 行追加する
 
-### Step 8: 最終報告
+### Step 9: 最終報告
 
-リリース PR URL / 収録した変更 / CI 結果 / マージコミット / デプロイ run URL と結果 / back-merge PR / 未完了の項目、を 1 ブロックで報告する。
+リリース PR URL / 収録した変更 / CI 結果 / マージコミット / デプロイ run URL と結果 / リリースタグ（と GitHub Release の URL）/ back-merge PR / 未完了の項目、を 1 ブロックで報告する。
 
 ## Notes
 
 - **`--to`（本番ブランチ）への直接 push・force push は一切行わない**。すべて PR 経由
+- **push 済みのタグは削除・付け替え・force push しない**。間違った版を打ってしまったら、新しい版（PATCH 等）を打ち直す方針をユーザーに提示する
 - リリース PR 本文・commit メッセージは**ファイル経由**で渡す（`--body-file`）。長文をシェル引数に直書きするとクォート事故になる
 - ブランチ保護 / ruleset が back-merge PR を阻む場合がある。**ruleset の一時解除は必ずユーザーに承認を求め**、変更前の JSON をバックアップし、マージ後に復元して差分ゼロを照合するまでを 1 セットで行う
 - 本番 DB / 外部 SaaS への直接の書き込みオペレーションが必要なら、**スクリプトを生成して提示するに留め、実行はユーザーに委ねる**
 - 監視の待ち時間が長い workflow ではバックグラウンド化し、待っている間に次の準備（PR 本文・back-merge ブランチ）を進める
-- 使用コマンド: `git fetch/log/diff/switch/cherry-pick/merge/merge-tree/push/grep`, `gh pr list/view/create/checks/merge`, `gh run list/view/watch`, `gh api`
+- 使用コマンド: `git fetch/log/diff/switch/cherry-pick/merge/merge-tree/push/grep/tag/ls-remote`, `gh pr list/view/create/checks/merge`, `gh run list/view/watch`, `gh release list/create`, `gh api`
 - 内部ツール: `Monitor`（CI・デプロイの完了検知）、`Skill`（fix-ci 呼び出し）
 
 ## Red flags
@@ -186,6 +224,9 @@ Mode B、またはコンフリクト解消・lockfile 再生成をした場合�
 | 「lockfile の競合は手で直せば速い」 | 依存解決の整合性が壊れる。片側採用 → 再生成が正攻法 |
 | 「CI が success なので中身は見なくてよい」 | マイグレーション未適用やデプロイの空振りが success で通ることがある。ジョブログで実体を確認する |
 | 「デプロイが失敗したのでとりあえず revert する」 | 本番の回復操作は影響範囲を提示してユーザー判断を仰ぐ。独断で実行しない |
+| 「コミットが全部 `:sparkles:` / `feat` だから MINOR」 | prefix は手がかりに過ぎない。破壊的変更が混ざっていれば MAJOR。各 PR の中身で判定し、理由を Step 1 で提示する |
+| 「タグを打ち間違えたので消して打ち直す」 | 取得済みの利用者や、タグで起動した workflow とずれる。SemVer の規則 3 どおり、リリース済みの版は変えずに次の版を打つ |
+| 「マージ直後にタグを打っておけば手間が省ける」 | デプロイが失敗した版にタグが残る。タグは本番デプロイ成功の確認後 |
 | 「除外指定の PR だけ cherry-pick から外せばよい」 | 依存する後続 PR がビルド不能・機能不全になる。依存関係を先に確認する |
 
 ## 関連
