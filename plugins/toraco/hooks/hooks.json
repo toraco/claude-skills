@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|mcp__.*__(pull_request_review_write|create_pull_request_review|create_and_submit_pull_request_review|submit_pending_pull_request_review|add_pull_request_review_comment|create_pull_request_review_comment)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/pr-review-submit-guard.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}
