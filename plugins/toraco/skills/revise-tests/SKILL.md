@@ -6,7 +6,7 @@ allowed-tools: Bash(git symbolic-ref:*), Bash(git log:*), Bash(git diff:*), Bash
 
 # Revise tests: $ARGUMENTS
 
-**使い方**: `/revise-tests [--mode=auto|impl-only] [--scope=<glob>] [--yes|--interactive]`
+**使い方**: `/revise-tests [--mode=auto|impl-only] [--scope=<glob>] [--base=<ref>] [--yes|--interactive]`
 
 ## Goal
 
@@ -49,13 +49,14 @@ TDD 前提のプロジェクトで、ブランチの現在状態に対してテ�
 
 - `$ARGUMENTS` に `--mode=auto` / `--mode=impl-only` があれば該当モードを採用。未指定時は後述の自動判定を行い、**判定結果をそのままデフォルトとして採用する**（確認は挟まない。共通方法論「Step 0 の自動確定」に従う）
 - `--scope=<glob>` が指定されていれば、`IMPL_PATHS` / `TEST_PATHS` のフィルタに使う（例: `--scope=src/auth/**`）
+- `--base=<ref>` があれば、0b で default branch の代わりにその ref を diff の起点にする（例: `develop`、epic ブランチ）。Stacked PRs の trunk が default branch と異なる場合などに指定する（`/stack-issues` が使う）
 - `--interactive` があれば `INTERACTIVE = true`。このときのみ Step 0 の各項目を従来通り `AskUserQuestion` で確認し、Step 3 以降でも全件を質問する
 - `--yes` があれば `YES = true`。Step 3 以降で一切質問せず推奨方針を採用する（共通方法論「Step 3 の推奨方針の自動採用」）。`--interactive` と同時指定なら `--interactive` を優先
 
 #### 0b. diff 範囲と実装ファイルの確定
 
-- `git symbolic-ref refs/remotes/origin/HEAD` で default branch を検出
-- `DIFF_RANGE = "origin/<default>...HEAD"` を **そのまま採用**し、確認は挟まない。diff が空 / default branch を検出できない場合のみ `AskUserQuestion` でコミット範囲を問う
+- `--base` 未指定なら `git symbolic-ref refs/remotes/origin/HEAD` で default branch を検出し、起点 `<base>` とする（指定時は `<base>` = `--base` の値）
+- `DIFF_RANGE = "origin/<base>...HEAD"` を **そのまま採用**し、確認は挟まない。diff が空 / 起点を検出できない場合のみ `AskUserQuestion` でコミット範囲を問う
 - `INTERACTIVE = true` のときのみ、後述 0d の Mode 確認と **1 つの複合 question にまとめて** 確認する（2 回連続の AskUserQuestion を避けるため。options 例: `diff 範囲 OK + 推奨 Mode で進める` / `diff 範囲を変更` / `Mode を変更` / `両方変更（Other）`）
 - `git diff --name-only $DIFF_RANGE` の出力から、実装ファイルとテストファイルを以下のルールで分離:
   - **テストファイル判定**: パスに `__tests__/` / `.test.` / `.spec.` / `_spec.` / `_test.` / `tests/` を含む、またはテストランナー設定 (`jest.config.*` / `vitest.config.*` / `pytest.ini` 等) で指定された glob に一致
