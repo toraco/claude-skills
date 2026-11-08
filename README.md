@@ -27,6 +27,7 @@ claude-skills/
 | `revise-spec` / `revise-tests` | 仕様書・テストの見直し |
 | `make-plan` / `grilling` | 計画立案・壁打ち |
 | `file-issue` | issue 起票 |
+| `stack-issues` | 親 issue の sub-issues を一括計画（確認は最初に 1 回）→ 実装 → revise → 1 issue 1 PR の Stacked PRs 作成 → auto-fix-review |
 | `land` | レビュー済み PR のマージ → マージ後 CI（デプロイ）監視 → 動作確認 → 関連 issue のクローズ |
 | `release` / `fix-ci` | リリース・CI 修復 |
 | `garden-deps` | 依存パッケージのガーデニング（Renovate の手動分・管轄外の棚卸しと一括更新） |
@@ -148,5 +149,5 @@ hook は plugin に入っているので、ローカルでもクラウドセッ�
 ```
 claude plugin validate .
 claude plugin marketplace add toraco/claude-skills && claude plugin install toraco@toraco-skills
-claude plugin details toraco   # Skills (16) と出れば OK
+claude plugin details toraco   # Skills (17) と出れば OK
 ```

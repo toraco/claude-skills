@@ -6,7 +6,7 @@ allowed-tools: Bash(git symbolic-ref:*), Bash(git log:*), Bash(git diff:*), Bash
 
 # Revise spec: $ARGUMENTS
 
-**使い方**: `/revise-spec [--mode=spec-only|with-impl] [仕様パス] [--yes|--interactive]`
+**使い方**: `/revise-spec [--mode=spec-only|with-impl] [仕様パス] [--base=<ref>] [--yes|--interactive]`
 
 ## Goal
 
@@ -50,6 +50,7 @@ allowed-tools: Bash(git symbolic-ref:*), Bash(git log:*), Bash(git diff:*), Bash
 - 引数にパス（`.md` や `docs/` 配下）が含まれれば `SPEC_PATHS` の初期候補に入れる
 - `--interactive` があれば `INTERACTIVE = true`。このときのみ Step 0 の各項目を従来通り `AskUserQuestion` で確認し、Step 3 でも全件を質問する
 - `--yes` があれば `YES = true`。Step 3 で一切質問せず推奨方針を採用する（共通方法論「Step 3 の推奨方針の自動採用」）。`--interactive` と同時指定なら `--interactive` を優先
+- `--base=<ref>` があれば `BASE_REF = <ref>`（例: `develop`、epic ブランチ）。0c / 0d で default branch の代わりに使う。Stacked PRs の trunk が default branch と異なる場合など、比較の起点を明示したいときに指定する（`/stack-issues` が使う）。未指定なら `BASE_REF` = default branch
 
 #### 0b. 対象仕様の特定
 
@@ -76,15 +77,15 @@ allowed-tools: Bash(git symbolic-ref:*), Bash(git log:*), Bash(git diff:*), Bash
 
 以下の条件で判定:
 
-- `git symbolic-ref refs/remotes/origin/HEAD` で default branch を検出
-- `git log origin/<default>..HEAD --oneline` に 1 件以上コミットがある、かつ変更ファイルに `.md` 以外（実装コード）が含まれる → **Mode B 候補**
+- `git symbolic-ref refs/remotes/origin/HEAD` で default branch を検出し、`--base` 未指定なら `BASE_REF` とする
+- `git log origin/<BASE_REF>..HEAD --oneline` に 1 件以上コミットがある、かつ変更ファイルに `.md` 以外（実装コード）が含まれる → **Mode B 候補**
 - それ以外 → **Mode A 候補**
 
 判定結果は **そのまま `MODE` に採用** し、確認は挟まない。`INTERACTIVE = true` のときのみ `AskUserQuestion` で確定する。
 
 #### 0d. Mode B 時の実装 diff 範囲確定
 
-- `DIFF_RANGE = "origin/<default>...HEAD"` を **そのまま採用**し、確認は挟まない
+- `DIFF_RANGE = "origin/<BASE_REF>...HEAD"` を **そのまま採用**し、確認は挟まない
 - `git diff --name-only $DIFF_RANGE` の出力は Step 0e の完了報告に含め、対象仕様との対応関係をユーザーが目視で否定できる状態にする
 - diff が空 / default branch を検出できない → 自動確定できないので `AskUserQuestion` でコミット範囲を問う
 - `INTERACTIVE = true` のときのみ、従来通り「この diff 範囲で合っているか / 別のコミット範囲を指定するか」を `AskUserQuestion` で確認する
