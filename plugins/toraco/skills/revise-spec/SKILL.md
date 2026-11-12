@@ -108,7 +108,7 @@ Step 1 に進む前に、自動確定した内容を **1 ブロックで必ず�
 
 ### Step 1: バイアス排除スキャン
 
-Mode に応じて `Agent` ツールを呼び出す。**全呼び出しで `subagent_type: "Explore"`、`model: "sonnet"` を明示すること**（未指定だと品質差が出る）。
+Mode に応じて `Agent` ツールを呼び出す。**全呼び出しで `subagent_type: "Explore"`、`model: "sonnet"` を明示すること**（未指定だとセッションのモデルで走り、コストが膨らむ）。
 
 #### Mode A: 仕様単体レビュー（subagent 1 個）
 

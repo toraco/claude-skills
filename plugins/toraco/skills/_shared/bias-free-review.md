@@ -6,7 +6,7 @@
 
 - スキャン系（読解・抽出）: `subagent_type: "Explore"`、`model: "sonnet"` を明示
 - scoring / 分類系: `subagent_type: "Explore"`、`model: "sonnet"` を明示
-- **全ての Agent 呼び出しで `model` を明示する**（未指定だと品質差が出る）。設計・オーケストレーション役を subagent に切り出す場合は `model: "opus"`（リポジトリ README「subagent のモデル指定」参照）
+- **全ての Agent 呼び出しで `model` を明示する**（未指定だと subagent はセッションのモデルで走り、並列数のぶんコストが膨らむ）。設計・オーケストレーション役を subagent に切り出す場合は `model: "opus"`（リポジトリ README「subagent のモデル指定」参照）
 - Agent はセッション継続できない。再スキャンは毎回、同じプロンプト・同じ設定で新規呼び出しする
 - Agent Teams は使わない。並列化は skill 内からの Agent ツール並列呼び出しで行う
 

@@ -47,20 +47,29 @@ GitHub App による Claude Code Review（公式 `code-review` プラグイン�
 - コミットメッセージ一覧を `COMMIT_LOG` に保存:
   `git log --format='%h %s' origin/$DEFAULT_BRANCH..HEAD`
 
-### Step 1.5: 事前コンテキスト収集（2 並列）
-
-**`Agent` ツールを 1 メッセージ内で 2 回並列呼び出し** する。両方とも
-`subagent_type: "Explore"`、`model: "sonnet"` を **明示** する。
+### Step 1.5: 事前コンテキスト収集
 
 #### 1.5a: CLAUDE.md ファイル列挙
 
-- 入力: `CHANGED_FILES`
-- タスク: リポジトリルートの `CLAUDE.md`、および `CHANGED_FILES` に含まれる
-  ファイルが存在するディレクトリとその全祖先ディレクトリにある `CLAUDE.md`
-  のパスを列挙する。**中身は読まず、パス一覧だけを返す**
-- 結果を `CLAUDE_MD_PATHS`（文字列配列）に保存
+機械的に決まる列挙なので subagent は使わず、親 skill がリポジトリルートで次を実行する。
+リポジトリルートの `CLAUDE.md` と、変更ファイルのあるディレクトリおよびその全祖先
+ディレクトリにある `CLAUDE.md` のパスが出力される。**中身はここでは読まない**:
+
+```bash
+git diff $DIFF_RANGE --name-only \
+  | { echo .; while IFS= read -r f; do dirname "$f"; done; } \
+  | while IFS= read -r d; do while :; do echo "$d"; [ "$d" = . ] && break; d=$(dirname "$d"); done; done \
+  | sort -u \
+  | while IFS= read -r d; do [ -f "$d/CLAUDE.md" ] && echo "$d/CLAUDE.md"; done \
+  | sed 's|^\./||'
+```
+
+- 結果を `CLAUDE_MD_PATHS`（文字列配列）に保存。1 件もなければ空配列とする
 
 #### 1.5b: 変更サマリ生成
+
+`Agent` ツールを 1 回呼び出す。`subagent_type: "Explore"`、`model: "sonnet"` を
+**明示** する。
 
 - 入力: `DIFF_RANGE`、`CHANGED_FILES`、`COMMIT_LOG`、および
   `git log --format='%h %s%n%b' origin/$DEFAULT_BRANCH..HEAD` の詳細ログ
@@ -91,7 +100,7 @@ GitHub App による Claude Code Review（公式 `code-review` プラグイン�
 
 `Agent` ツールを **1 メッセージ内で 5 回並列呼び出し** する。全 5 エージェントで
 `subagent_type: "Explore"`、`model: "sonnet"` を **必ず明示** する
-（公式プラグインとパリティを取るための最重要設定）。各 subagent には
+（理由は Notes 参照）。各 subagent には
 共通で以下を渡す:
 
 - `DIFF_RANGE`（例: `origin/main...HEAD`）
@@ -288,11 +297,12 @@ Step 2 で集まった全 issue について、各 issue ごとに `Agent` ツ�
 ## Notes
 
 - **`Agent` ツール呼び出しでは必ず `model` を明示する**:
-  - Step 1.5a / 1.5b (事前コンテキスト): `model: "sonnet"`
+  - Step 1.5b (変更サマリ): `model: "sonnet"`
   - Step 2 (5 reviewer): `model: "sonnet"`
   - Step 3 (scoring): `model: "sonnet"`
-  - `model` 未指定だとデフォルトの軽量モデルが走り、公式プラグインとの品質差が
-    顕著になる（この skill を作り直した主因）
+  - `model` 未指定だと Explore subagent はセッションのモデル（Opus / Fable など）で
+    走り、並列数のぶんコストが膨らむ。読解・抽出・scoring は `sonnet` で足りるので、
+    毎回明示してコストと品質を揃える
 - レビュー subagent には「build / typecheck は別途 CI で走るので、ここでは
   チェックしないし、それ由来の指摘はしない」と必ず伝えること
 - `gh` コマンドは Step 2 #4 と Step 0 のフォールバックでのみ使用する
