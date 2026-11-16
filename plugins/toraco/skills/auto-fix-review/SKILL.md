@@ -1,11 +1,11 @@
 ---
 name: auto-fix-review
-description: PR の Claude レビュー（自動レビューか @claude メンション）か、--mode local なら /local-review --yes の手元レビューで、🔴 / 🟡 の指摘がなくなるまで修正を自動反復する。Stacked PRs では上位レイヤーの rebase を最後の 1 回にまとめ、CI の連鎖実行を抑える
+description: PR の Claude レビュー（自動レビューか @claude メンション）か、--mode local なら /local-review --yes の手元レビュー（PR 作成前でも可）で、🔴 / 🟡 の指摘がなくなるまで修正を自動反復する。Stacked PRs では上位レイヤーの rebase を最後の 1 回にまとめ、CI の連鎖実行を抑える
 ---
 
 # Auto Fix Review Loop: $ARGUMENTS
 
-**使い方**: `/auto-fix-review [pr-number] [--mode auto|mention|local] [--final-review] [--max-iterations N] [--wait-minutes N] [--max-reruns N] [--stack] [--max-cascades N]`
+**使い方**: `/auto-fix-review [pr-number] [--mode auto|mention|local] [--base <branch>] [--final-review] [--max-iterations N] [--wait-minutes N] [--max-reruns N] [--stack] [--max-cascades N]`
 
 ## Goal
 
@@ -35,7 +35,10 @@ Claude Code Review が PR に返した **High severity**（`### 🔴 バグ` ま
 修正を指摘がなくなるまで繰り返し、修正を commit して **1 回だけ** push する（Step L）。PR 上のレビュー
 （GitHub Actions の run）も、修正の反復ごとの push で走る CI も起きないので、Actions の消費を抑えられる。
 `--final-review` を付けると、その後に PR 上のレビュー（auto / mention）を最終確認として受け、出た指摘は
-従来どおり `/fix-review --yes` で直す。重大度の基準は local / mention のどちらのレビューでも
+従来どおり `/fix-review --yes` で直す。
+local モードは **PR がなくても使える**（PR 作成前の作業ブランチで回す用途）。current branch に PR が無いときは
+current branch をそのまま対象にし、差分の起点は `--base` か default branch とする。修正は commit するが push は
+しない（push と PR 作成は `/ship` に任せる）。重大度の基準は local / mention のどちらのレビューでも
 `${CLAUDE_SKILL_DIR}/../_shared/review-severity.md` にそろえる。
 
 対象 PR が GitHub の **Stacked PRs**（`main ← PR-A ← PR-B ← PR-C` のように各 PR が 1 つ下の PR のブランチを
@@ -60,7 +63,11 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
 
 `$ARGUMENTS` を以下のように解釈する（順不同・全て省略可）。
 
-- `pr-number`: 数値トークン1個。対象 PR 番号（省略時は current branch から `gh pr view` で検出）
+- `pr-number`: 数値トークン1個。対象 PR 番号（省略時は current branch から `gh pr view` で検出）。
+  local モードでは、PR が見つからなければ PR なしで current branch を対象にする（Step 0-2）
+- `--base <branch>`: local モードで差分の起点にするブランチ。`/local-review` の `--base` にそのまま渡す。
+  省略時は PR があればその base、PR が無ければ `/local-review` の自動判定（default branch）に任せる。
+  local 以外のモードでは無視する
 - `--mode auto|mention|local`: レビュー起動方式を明示する（省略時は Step 0-6 で auto / mention を自動判定する。
   local は自動判定では選ばれない）
   - `auto`: push を契機に自動でレビューが投稿されるのを待つ（従来の挙動）
@@ -87,7 +94,7 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
   - 最新の `author.login == "claude"` の集約レビューコメントに High severity 見出し（`🔴` または `High`）と Medium severity 見出し（`🟡` または `Medium`）のいずれも含まれない
   - `claude` 発の**未解決（`isResolved == false`）review thread** が 0 件
   - local モード（`--final-review` なし）では、`/local-review` が `LOCAL_REVIEW_RESULT: CLEAN`（または `NO_DIFF`）で終わり、
-    修正があればその push まで済んでいること
+    修正があればその push まで済んでいること（PR が無いときは commit まで）
 - **B. MAX_ITER**: 反復回数が `--max-iterations` に到達（local モードでは `LOCAL_REVIEW_RESULT: MAX_ITER`）
 - **C. TIMEOUT**: レビュー待機が `--wait-minutes` を超過しても新規レビューが到着せず、かつ rerun 対象の
   workflow run を特定できない（run 実行中・rerun しても状況が変わらない conclusion 等を含む）
@@ -113,9 +120,23 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
 
 1. `$ARGUMENTS` を上記 Parameters に従って解析する。
 2. 対象 PR を確定する:
-   - 引数で指定されていればそれを使う
+   - 引数で指定されていればそれを使う。その PR を取得できなければ（番号の誤り・`gh` のエラー）、モードを問わず
+     **D (ERROR)** とする（PR なしの扱いにして current branch をレビューしない）
    - そうでなければ `gh pr view --json number,headRefName` で current branch の PR を検出
-   - 見つからなければユーザーに通知して終了
+   - 見つからない場合は、まず「PR が無い」のか「取得に失敗した」のかを区別する。`gh pr view` が
+     「no pull requests found」以外のエラー（認証・ネットワーク・GraphQL が使えない等）で失敗したときは、REST の
+     `gh api "repos/{owner}/{repo}/pulls?head={owner}:<current branch>&state=open" --jq '.[0].number'` で確かめ直す。
+     PR があればそれを使い、REST でも取得できなければ **D (ERROR)**。PR が無いと確かめられた場合だけ次へ進む:
+     - `REVIEW_MODE == local` なら `NO_PR = true` として続ける（PR 作成前の手元レビュー）。対象は current branch とし、
+       `headRefName` は `git branch --show-current` の値とする。detached HEAD で取れなければ **D (ERROR)**。
+       current branch が default branch（`git symbolic-ref refs/remotes/origin/HEAD` か `gh repo view` で取得）か
+       `main` / `master` / `develop`、または `--base` と同じブランチなら **D (ERROR)** とし、作業ブランチに切り替えて
+       （`git switch -c <作業ブランチ>`）から再実行するよう案内する（保護ブランチに修正を commit しないため。
+       起点と同じブランチでは `/local-review` が `NO_DIFF` を返し、何もレビューせずに A になってしまうため）。
+       以降、PR を参照する手順（Step 0-8・0-9、Step L の push、`--final-review`）は `NO_PR` の分岐に従う
+     - それ以外のモードではユーザーに通知して終了（PR 上のレビューを使うので PR が必要。PR が無い段階なら
+       `--mode local` を案内する）
+   - 見つかった場合は `NO_PR = false`
 3. `iteration = 0` で初期化する。
    `REVIEW_MODE == local`（`--mode local`）の場合、PR 上のレビューを待たないので 4.〜7. は飛ばして 8. へ進む
    （`--final-review` で PR 上のレビューに移るときに Step L-6 で実行する）。
@@ -169,7 +190,8 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
    のコメントだけを読むため）。レビュー応答が別の login（`github-actions` 等）で投稿された場合（Step 1-3 の mention 手順 6 で検出）は、
    `/fix-review` がそれを読めないので **D (ERROR)** で終了し、workflow が Claude GitHub App の token で
    投稿するよう設定されているか確認を促す。
-8. **Stacked PRs の判定**: PR の `stack` オブジェクトを取得する（stack に属さない PR では `null`。
+8. **Stacked PRs の判定**（`NO_PR = true` なら、stack の取得と判定だけを飛ばして `STACKED = false` とし、`--stack` は
+   無視する。この 8. の末尾にある「local なら 9. の後に Step L へ進む」は `NO_PR = true` でも適用する）: PR の `stack` オブジェクトを取得する（stack に属さない PR では `null`。
    リポジトリで Stacked PRs が有効でない場合も `null` になるか、フィールド自体が無い）:
    ```bash
    gh api "repos/{owner}/{repo}/pulls/<pr>" --jq '.stack'
@@ -192,6 +214,7 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
    - `STACKED = true` かつ `--stack` 指定あり → **stack モード**。Step 1 へは進まず **Step S** へ進む
    - stack モードでなく `REVIEW_MODE == local` の場合は、9. の後に Step 1 ではなく **Step L** へ進む
 9. **作業ツリーを対象 PR の head に合わせる**（`/fix-review` は current branch に commit して push するため）。
+   `NO_PR = true` なら current branch がそのまま対象なので何もしない（作業ツリーの確認は Step L-2 で行う）。
    current branch が既に対象 PR の head で origin と一致していれば何もしない。切り替えが必要なときだけ:
    ```bash
    git status --porcelain      # 空でなければ D (ERROR)。勝手に stash しない
@@ -206,13 +229,19 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
 `REVIEW_MODE == local` のとき、Step 1〜4 の代わりにこの Step を実行する。PR 上のレビューは依頼も待機もしない。
 stack モードでは Step S-2 がレイヤーごとにこの Step を呼ぶ。
 
-1. **差分の起点を決める**: `REVIEW_BASE=$(gh pr view <pr> --json baseRefName -q .baseRefName)`。
-   PR 上のレビューと同じく PR の base との差分を見る（Stacked PRs では 1 つ下のレイヤーのブランチになる）。
-   取得できなければ **D (ERROR)**
+1. **差分の起点を決める**:
+   - `--base` が指定されていればその値を `REVIEW_BASE` とする
+   - `NO_PR = false` なら `REVIEW_BASE=$(gh pr view <pr> --json baseRefName -q .baseRefName)`。
+     PR 上のレビューと同じく PR の base との差分を見る（Stacked PRs では 1 つ下のレイヤーのブランチになる）。
+     取得できなければ **D (ERROR)**
+   - `NO_PR = true` なら `REVIEW_BASE` は空のままにし、3. で `--base` を渡さず `/local-review` の自動判定
+     （default branch）に任せる。決まった起点は `/local-review` のレポートから読み取って Step 5 に書く
 2. **作業ツリーを確かめる**: `git status --porcelain` が空であること（Step 0-9 で確認済みだが、stack モードで
-   レイヤーを切り替えた後も確認する）。空でなければ **D (ERROR)**。勝手に stash しない
+   レイヤーを切り替えた後も確認する）。空でなければ **D (ERROR)**。勝手に stash しない。
+   `NO_PR = true` では未 commit の作業が残っていることが多いので、先に commit（`/commit`）してから再実行するよう案内する
+   （レビュー対象は commit 済みの差分で、5. で `git add -A` するときに本人の変更と修正を混ぜないため）
 3. **`/local-review` を呼ぶ**: `Skill` ツールで `local-review` を
-   `args: "--yes --base <REVIEW_BASE> --max-iterations <max-iterations>"` で呼ぶ。
+   `args: "--yes --base <REVIEW_BASE> --max-iterations <max-iterations>"` で呼ぶ（`REVIEW_BASE` が空なら `--base` を付けない）。
    `/local-review` は修正を working tree に残し、commit も push もしない
 4. **結果を読む**: 出力末尾の `LOCAL_REVIEW_RESULT:` 行と `LOCAL_REVIEW_COUNTS:` 行を読み取り、Step 5 のレポート用に
    控える。結果行が無ければ **D (ERROR)**
@@ -223,12 +252,15 @@ stack モードでは Step S-2 がレイヤーごとにこの Step を呼ぶ。
    1. `git add -A` で修正をステージする（2. で作業ツリーが空だったので、ここにあるのは `/local-review` の修正だけ）
    2. `Skill` ツールで `commit` を呼び、プロジェクトの慣例に沿って commit する。CLAUDE.md が構造の変更と振る舞いの
       変更を別 commit にするよう求めている場合は分けて commit する
-   3. `git push origin HEAD:<headRefName>` で fast-forward push する（force push はしない）。拒否されたら
+   3. `NO_PR = true` なら push せずに 6. へ進む（push と PR 作成は後で `/ship` に任せる。ここで push すると
+      リモートにブランチができ、push トリガの CI も走る）
+   4. `git push origin HEAD:<headRefName>` で fast-forward push する（force push はしない）。拒否されたら
       **D (ERROR)**。`STACKED = true` でも上位レイヤーには触れない
-   4. push の回数を `local_pushes` に数える（Step 5 のレポート用）
+   5. push の回数を `local_pushes` に数える（Step 5 のレポート用）
 6. **終了ステータスを決める**:
    - `MAX_ITER` → **B (MAX_ITER)**。最終周の修正は再レビューしていないことを Step 5 で伝える
-   - `CLEAN` / `NO_DIFF` で `--final-review` なし、または stack モード → **A (SUCCESS)**
+   - `CLEAN` / `NO_DIFF` で `--final-review` なし、stack モード、または `NO_PR = true` → **A (SUCCESS)**
+     （`NO_PR = true` で `--final-review` が付いていた場合は、PR が無いので無視したことを Step 5 に書く）
    - `CLEAN` / `NO_DIFF` で `--final-review` あり → PR 上のレビューに移る。Step 0 の 4.〜7. を実行して
      `REVIEW_MODE` を auto / mention から自動判定し直し（`--mode local` は無視する）、`iteration = 0` から
      **Step 1** へ進む。以降は従来どおり、指摘があれば `/fix-review --yes` で直す。
@@ -583,6 +615,9 @@ cascade 後のレビューで指摘が出て修正したときだけ、そのレ
   `MAX_ITER` で終わった場合は、最終周の修正が再レビューされていないことと、再実行（`/auto-fix-review --mode local`）または
   `--final-review` での確認を案内する。`--final-review` を指定した場合は、その後の PR 上のレビューのモードと結果、
   stack モードのため `--final-review` を無視した場合はその旨
+- local モードで PR が無かった場合（`NO_PR = true`）: PR なしで current branch を対象にしたこと、作成した commit
+  （push していないこと）、`--final-review` を無視した場合はその旨。次のアクションとして `/ship` での push と PR 作成を
+  案内する（PR 上のレビューも受けたいなら、PR 作成後に `/auto-fix-review` を auto / mention で実行する）
 - 実行した反復回数
 - 各反復で修正した issue のサマリ（/fix-review の出力を集約）
   - 反復 0 回で SUCCESS した場合は「修正なし（初回時点で High/Medium 指摘なし）」と明示する
@@ -614,7 +649,7 @@ cascade 後のレビューで指摘が出て修正したときだけ、そのレ
 
 ## Safety notes
 
-- **local モードの push は最後の 1 回だけ**（レイヤーごと、cascade 後の再レビューごとに 1 回）。`/local-review` の周回の
+- **local モードの push は最後の 1 回だけ**（PR が無いときは push しない。レイヤーごと、cascade 後の再レビューごとに 1 回）。`/local-review` の周回の
   途中で commit・push しない。途中で push すると、その都度 CI と（auto モードのリポジトリでは）PR 上のレビューが走り、
   local モードにした意味がなくなる
 - local モードでも、PR に `pull_request` トリガの自動レビューが設定されているリポジトリでは、最後の push で PR 上の
