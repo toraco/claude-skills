@@ -1,35 +1,58 @@
 ---
 name: local-review
-description: ローカルで Claude Code Review 相当のレビューを生成し、🔴バグを自動修正・🟡設計問題は確認の上で修正、最大3周ループする
+description: ローカルで Claude Code Review 相当のレビューを生成し、共通の重大度基準で 🔴 / 🟡 / 🟢 に分類して、🔴バグを自動修正・🟡設計上の問題は確認の上で修正（--yes なら確認なし）、既定で最大3周ループする
 ---
 
 # Local code review & auto-fix loop: $ARGUMENTS
 
-**使い方**: `/local-review [--include-uncommitted]`
+**使い方**: `/local-review [--include-uncommitted] [--yes] [--base <branch>] [--max-iterations N]`
 
 ## Goal
 
-GitHub App による Claude Code Review（公式 `code-review` プラグイン）と
-同等のレビューをローカルで生成し、検出された問題を自動修正する。
-レビュー → 修正 → 再レビュー を最大 3 周まで繰り返し、🔴 / 🟡 に分類される
-指摘（分類しきい値は Step 4 参照）がゼロになったら終了する。
+PR 上の Claude のレビュー（公式 `code-review` プラグインの方式）に相当するレビューを
+ローカルで生成し、検出された問題を自動修正する。
+レビュー → 修正 → 再レビュー を最大 `MAX_ITERATIONS` 周（既定 3）まで繰り返し、
+🔴 / 🟡 に分類される指摘（重大度の基準は `${CLAUDE_SKILL_DIR}/../_shared/review-severity.md`、
+しきい値は Step 4 参照）がゼロになったら終了する。
+
+PR に push する前に回せば、レビューと修正の反復で GitHub Actions（PR 上のレビューと、push のたびに
+走る CI）を消費しない。`/auto-fix-review --mode local` はこの skill を `--yes` で呼び、修正を
+まとめて 1 回だけ push する。
+
+## Parameters
+
+- `--include-uncommitted`: commit していない変更（`git diff HEAD`）もレビュー対象に含める
+- `--yes`: 非対話モード。🟡 もユーザーに確認せず修正し、Step 6 の検証が直せないときも
+  質問せずに終了する（`/auto-fix-review` などから呼ぶとき用）
+- `--base <branch>`: 差分の起点にするブランチ（省略時は Step 0 で自動判定）。
+  Stacked PRs の上位レイヤーでは 1 つ下のレイヤーのブランチを指定する
+- `--max-iterations N`: レビューの最大周回数（既定 3）
 
 ## Steps (obey strictly)
 
 ### Step 0: Setup
 
-- 状態変数を宣言: `iteration = 1`, `MAX_ITERATIONS = 3`,
+- `$ARGUMENTS` を Parameters に従って解析する:
+  - `--include-uncommitted` があれば `INCLUDE_UNCOMMITTED = true`、それ以外は false
+  - `--yes` があれば `AUTO_YES = true`、それ以外は false
+  - `MAX_ITERATIONS` は `--max-iterations` の値（省略時は 3）
+- 状態変数を宣言: `iteration = 1`,
   `SKIPPED_ISSUES = []`（ユーザーが「スキップする」を選んだ 🟡 の識別子
   リスト。`<file>:<lines>:<title>` 形式で保持し、周をまたいでも維持する）
-- `$ARGUMENTS` に `--include-uncommitted` が含まれていれば
-  `INCLUDE_UNCOMMITTED = true`、それ以外は false
-- デフォルトブランチを以下の順で検出し `DEFAULT_BRANCH` に保存:
-  1. `git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'`
-  2. `gh repo view --json defaultBranchRef -q .defaultBranchRef.name`
-  3. `main` が存在すれば `main`、なければ `master`
-- `git fetch origin $DEFAULT_BRANCH --quiet` を 1 回だけ実行
-- 現在のブランチが default branch と同じ場合は「default branch 上ではレビュー
-  対象がありません」と表示して終了
+- 重大度の基準 `${CLAUDE_SKILL_DIR}/../_shared/review-severity.md` を `Read` し、
+  本文を `SEVERITY_RUBRIC` として保持する（Step 2 / Step 3 の subagent にそのまま渡す）
+- 差分の起点ブランチを以下の順で決め `BASE_BRANCH` に保存:
+  1. `--base` の値
+  2. current branch に PR があればその base: `gh pr view --json baseRefName -q .baseRefName 2>/dev/null`
+     （PR の base が default branch でないリポジトリ（`develop` 向けなど）や Stacked PRs の上位レイヤーで、
+     PR 上のレビューと同じ差分を見るため）
+  3. デフォルトブランチ:
+     1. `git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'`
+     2. `gh repo view --json defaultBranchRef -q .defaultBranchRef.name`
+     3. `main` が存在すれば `main`、なければ `master`
+- `git fetch origin $BASE_BRANCH --quiet` を 1 回だけ実行
+- 現在のブランチが `BASE_BRANCH` と同じ場合は「起点ブランチ上ではレビュー
+  対象がありません」と表示し、`LOCAL_REVIEW_RESULT: NO_DIFF`（Step 8 の結果行）を出して終了
 - **タスクリスト化**: `TaskCreate` でこの skill の主要ステップ
   （対象差分検出 / 事前コンテキスト収集 / 並列レビュー / スコアリング / 修正 /
   検証 / ループ判定 / 最終レポート）をタスクとして登録する。各ステップ開始時に
@@ -37,15 +60,15 @@ GitHub App による Claude Code Review（公式 `code-review` プラグイン�
 
 ### Step 1: 対象差分の検出
 
-- `DIFF_RANGE = "origin/$DEFAULT_BRANCH...HEAD"` をレビュー対象とする
+- `DIFF_RANGE = "origin/$BASE_BRANCH...HEAD"` をレビュー対象とする
 - `INCLUDE_UNCOMMITTED` が true の場合は、加えて `git diff HEAD` も対象に含める
 - **iteration >= 2 の場合は `INCLUDE_UNCOMMITTED` を強制的に `true` に上書き
   する**（前周の 🔴 自動修正や 🟡 修正は commit せず working tree にある
   ため、これを含めないと同じ修正要求が永続し無限ループする）
 - `git diff $DIFF_RANGE --name-only` で変更ファイル一覧を `CHANGED_FILES` に保存
-- 差分が空なら「レビュー対象の差分がありません」と表示して終了
+- 差分が空なら「レビュー対象の差分がありません」と表示し、`LOCAL_REVIEW_RESULT: NO_DIFF` を出して終了
 - コミットメッセージ一覧を `COMMIT_LOG` に保存:
-  `git log --format='%h %s' origin/$DEFAULT_BRANCH..HEAD`
+  `git log --format='%h %s' origin/$BASE_BRANCH..HEAD`
 
 ### Step 1.5: 事前コンテキスト収集
 
@@ -72,7 +95,7 @@ git diff $DIFF_RANGE --name-only \
 **明示** する。
 
 - 入力: `DIFF_RANGE`、`CHANGED_FILES`、`COMMIT_LOG`、および
-  `git log --format='%h %s%n%b' origin/$DEFAULT_BRANCH..HEAD` の詳細ログ
+  `git log --format='%h %s%n%b' origin/$BASE_BRANCH..HEAD` の詳細ログ
 - タスク: 差分と commit メッセージから変更の全体像を把握し、以下の形式で返す:
   ```
   purpose: <1-2文で変更の目的>
@@ -87,7 +110,7 @@ git diff $DIFF_RANGE --name-only \
   ```
 - 結果を `CHANGE_SUMMARY` に保存
 
-この 2 つの結果（`CLAUDE_MD_PATHS` と `CHANGE_SUMMARY`）は Step 2 の 5 reviewer
+この 2 つの結果（`CLAUDE_MD_PATHS` と `CHANGE_SUMMARY`）と `SEVERITY_RUBRIC` は Step 2 の 6 reviewer
 **および** Step 3 の全 scoring エージェントに共通プレフィックスとして渡す。
 
 ## Loop: iteration 1 → MAX_ITERATIONS
@@ -96,20 +119,23 @@ git diff $DIFF_RANGE --name-only \
 `CHANGE_SUMMARY` と `CLAUDE_MD_PATHS` を **再生成せず** そのまま再利用する
 （差分の主旨は周をまたいでも変わらないため）。
 
-### Step 2: 並列レビュー（Agent ツール 5 並列）
+### Step 2: 並列レビュー（Agent ツール 6 並列）
 
-`Agent` ツールを **1 メッセージ内で 5 回並列呼び出し** する。全 5 エージェントで
+`Agent` ツールを **1 メッセージ内で 6 回並列呼び出し** する。全 6 エージェントで
 `subagent_type: "Explore"`、`model: "sonnet"` を **必ず明示** する
 （理由は Notes 参照）。各 subagent には
 共通で以下を渡す:
 
 - `DIFF_RANGE`（例: `origin/main...HEAD`）
 - `CHANGED_FILES`（変更ファイルパス一覧）
-- `DEFAULT_BRANCH` 名
+- `BASE_BRANCH` 名（差分の起点）
 - `CHANGE_SUMMARY`（Step 1.5b の成果物 — 変更の目的・主要変更・リスク領域）
 - `CLAUDE_MD_PATHS`（Step 1.5a の成果物）
 - `COMMIT_LOG`（コミットメッセージ一覧。ローカル固有の強い意図シグナル）
 - 後述の「false positive 例」リスト
+- `SEVERITY_RUBRIC`（重大度の基準。各 issue の `severity_hint` はこれに従って付ける）
+- **CLAUDE.md のレビュー向けの節**: 「CLAUDE.md にレビュー向けの節（例: `## Code review`）があれば、
+  そこに書かれた観点を自分の担当範囲で適用すること」と伝える
 - **引用義務**: 「各 issue には、対象コードを最低 1 行コードブロックで引用
   せよ。引用できない指摘は出力から除外せよ。**例外**: 『テスト追加』『新規
   ファイル作成』など存在しないコードを要求する issue の場合は、関連する既存
@@ -133,7 +159,8 @@ git diff $DIFF_RANGE --name-only \
 ```
 - file: <path>
 - lines: <start>-<end>
-- category: bug | claude-md | history | comment | prior-pr
+- category: bug | claude-md | history | comment | prior-pr | design
+- severity_hint: red | yellow | green   # SEVERITY_RUBRIC の 🔴 / 🟡 / 🟢
 - title: <one line>
 - detail: <description>
 - code_excerpt: |
@@ -141,7 +168,7 @@ git diff $DIFF_RANGE --name-only \
 - suggested_fix: <how to fix>
 ```
 
-5 役割（全て `subagent_type: "Explore"` + `model: "sonnet"`）:
+6 役割（全て `subagent_type: "Explore"` + `model: "sonnet"`）:
 
 | # | 役割 | 指示の要点 |
 |---|------|-----------|
@@ -150,6 +177,7 @@ git diff $DIFF_RANGE --name-only \
 | 3 | git history 観点 | 変更箇所の `git log -p` / `git blame` で歴史的経緯と矛盾する変更（過去の fix を巻き戻していないか等）がないかチェック。現 HEAD のファイル内容を見る必要がある場合は `git show` ではなく `Read` を使う |
 | 4 | 過去 PR 観点 | `gh pr list --search "<file>" --state merged` で過去 PR を探し、`gh pr view <n> --comments` で過去のレビューコメントが現在の差分にも当てはまらないかチェック。ファイル現状の確認には `Read` を使う（`git show` は不要） |
 | 5 | コードコメント準拠 | 変更ファイル内の既存コメント（TODO / NOTE / WARNING 等）が述べるガイダンスに差分が従っているかチェック |
+| 6 | セキュリティ・パフォーマンス・設計 | 認可・入力検証・機密情報の扱い、現実的なデータ量でのパフォーマンス（N+1・上限のない取得・ループ内 I/O 等）、責務の分け方・正本の二重化・レイヤーの依存方向、振る舞いの変更に対するテストの有無をチェック。CLAUDE.md が指す設計ドキュメントがあれば Read して照らし合わせる。category は脆弱性・誤動作なら `bug`、それ以外は `design` |
 
 False positive 例（全 subagent に必ず渡す）:
 
@@ -160,13 +188,14 @@ False positive 例（全 subagent に必ず渡す）:
 - CLAUDE.md にあっても明示的に silenced（例: lint ignore コメント）されているもの
 - 意図的と思われる挙動変更で、PR の主目的に直接関係するもの
 - 差分外の行に関する指摘
-- ドキュメント不足・テスト不足など一般的なコード品質の指摘（CLAUDE.md で
-  明示要求されているものを除く）
+- ドキュメント不足など一般的なコード品質の指摘（CLAUDE.md で明示要求されて
+  いるものを除く）。ただし「振る舞いを変えたのにテストがない」は
+  `SEVERITY_RUBRIC` の 🟡 に当たるので指摘してよい
 
 ### Step 3: Confidence scoring（並列）
 
 Step 2 で集まった全 issue について、各 issue ごとに `Agent` ツールを並列呼び出し
-し、0-100 のスコアを返させる。全 scoring 呼び出しで `subagent_type: "Explore"`、
+し、0-100 のスコアと最終的な重大度を返させる。全 scoring 呼び出しで `subagent_type: "Explore"`、
 `model: "sonnet"` を **必ず明示** する。
 1 メッセージ内で全 issue 分の Agent 呼び出しを並列化する。
 
@@ -177,7 +206,19 @@ Step 2 で集まった全 issue について、各 issue ごとに `Agent` ツ�
 - `DIFF_RANGE`（必要なら scoring agent が自力で diff 取得可）
 - 対象 issue の全フィールド（特に `code_excerpt` を必ず含める）
 - Step 2 と同じ「false positive 例」リスト
+- `SEVERITY_RUBRIC`
 - 下記 rubric（verbatim）
+
+返却形式:
+
+```
+- score: <0-100>
+- severity: red | yellow | green | none   # none = SEVERITY_RUBRIC の「指摘しないもの」
+- severity_reason: <🔴 なら壊れる入力・状態と結果、🟡 なら根拠（規約の引用か放置したときに起きること）>
+```
+
+重大度は reviewer の `severity_hint` を鵜呑みにせず、`SEVERITY_RUBRIC` に照らして付け直させる。
+`severity_reason` を具体的に書けない場合は、基準の「迷ったときのルール」に従って 1 段下げさせる。
 
 スコアリング rubric（公式プラグインと同じ。subagent にそのまま渡すこと）:
 
@@ -215,24 +256,26 @@ Step 2 で集まった全 issue について、各 issue ごとに `Agent` ツ�
 ### Step 4: フィルタリング & 分類
 
 - **まず dedup**: 同一ファイル・近接行（±3 行）で同趣旨の指摘が複数 reviewer
-  から出ている場合、score が最も高い 1 件を **採用**（category と score もその
+  から出ている場合、1 件だけを **採用**（category・severity・score もその
   まま採用、merge はしない）、他は **🟢 参考リストに個別エントリとして残す**。
   「同趣旨」の判定は `title` / `detail` / `suggested_fix` の類似性で行う。
-  score 同点の場合は category の優先順（`bug` > `history` > `claude-md` >
-  `prior-pr` > `comment`）で 1 件選ぶ。
+  採用するのは severity が最も重いもの（`red` > `yellow` > `green`）、
+  同じなら score が最も高いもの、それも同点なら category の優先順（`bug` >
+  `history` > `design` > `claude-md` > `prior-pr` > `comment`）で 1 件選ぶ。
 - **次にスキップ済みフィルタ**: `SKIPPED_ISSUES` に含まれる identifier
   （`<file>:<lines>:<title>`）と一致する issue は 🟢 参考リストに降格し、🟡
   分類対象から除外する（前周でユーザーが「スキップする」を選んだものを再度
   `AskUserQuestion` で聞き直さないため）。
-- issue を以下のしきい値で分類:
-  - 🔴 **バグ**: `category` が `bug` または `history` **かつ** score >= 50
-  - 🟡 **設計問題**: `category` が `claude-md` / `comment` / `prior-pr`
-    **かつ** score >= 80
-- 上記いずれにも該当しない issue は **破棄**（参考リストには残す）
+- issue を Step 3 の `severity` と score で分類する（category では決めない）:
+  - 🔴 **バグ**: `severity == red` **かつ** score >= 50
+  - 🟡 **設計上の問題**: `severity == yellow` **かつ** score >= 80
+  - 🟢 **参考**: 上記に当たらないもの（`severity == green`、score が
+    しきい値未満の `red` / `yellow`）。修正対象にしない
+  - `severity == none` は破棄する（参考リストにも残さない）
 - ユーザー向けに以下を表示:
-  - 🔴 一覧: ファイル:行 / 一行サマリ / なぜフラグされたか / score
+  - 🔴 一覧: ファイル:行 / 一行サマリ / `severity_reason` / score
   - 🟡 一覧: 同上
-  - 🟢 参考（修正対象外になったもの。category と score を併記）
+  - 🟢 参考（修正対象外になったもの。category・severity・score を併記）
 - 🔴 / 🟡 ともに 0 件なら **Step 7 へジャンプ**（ループ終了判定）
 
 ### Step 5: 修正フェーズ
@@ -245,9 +288,13 @@ Step 2 で集まった全 issue について、各 issue ごとに `Agent` ツ�
 - 同一ファイルに複数の修正がある場合はまとめて適用し、Edit の競合を避ける
 - 修正後に `git diff <file>` で意図通りか確認
 
-#### 🟡 設計問題の確認
+#### 🟡 設計上の問題の確認
 
-- 🟡 が 1 件以上ある場合は `AskUserQuestion` で確認する
+- `AUTO_YES == true` の場合は確認せず、🔴 と同じ手順で全件を `suggested_fix`
+  どおりに修正する。ただし修正が PR の目的から大きく外れる（別機能の追加、
+  公開 API の変更、広範囲のリファクタリングなど）ものは修正せず、Step 8 の
+  レポートに「見送った 🟡」として理由とともに残し、`SKIPPED_ISSUES` に追加する
+- `AUTO_YES == false` の場合、🟡 が 1 件以上あれば `AskUserQuestion` で確認する
 - 件数が多ければ 1 質問あたり最大 4 件までに分割
 - 各 issue について以下の選択肢を提示:
   - 「指示通り修正する」
@@ -262,23 +309,24 @@ Step 2 で集まった全 issue について、各 issue ごとに `Agent` ツ�
 
 ### Step 6: ローカル検証（check 相当）
 
-以下を順に実行する。コマンドは `package.json` の scripts などから自動検出。
+以下を順に実行する。コマンドは CLAUDE.md や `package.json` の scripts などから自動検出。
 
-1. **テスト**: 例 `yarn test`。失敗があればそのループ内で修正する
-2. **リント**: 例 `yarn lint`。エラーがあれば修正
-3. **ビルド dryrun**: 例 `yarn <workspace> build:dryrun`。エラーがあれば修正
+1. **テスト**: 例 `pnpm test`。失敗があればそのループ内で修正する
+2. **リント**: 例 `pnpm lint`。エラーがあれば修正
+3. **ビルド dryrun**: 例 `pnpm <workspace> build:dryrun`。エラーがあれば修正
 
 検証由来の修正で **連続して同じエラーが解消できない**、もしくは
-**大量に新規エラーが出ている** 場合は、ループを止めてユーザーに状況を
-報告し、続行可否を確認する。
+**大量に新規エラーが出ている** 場合は、ループを止める。
+`AUTO_YES == false` ならユーザーに状況を報告し、続行可否を確認する。
+`AUTO_YES == true` なら確認せずに終了し、Step 8 の結果行を `CHECK_FAILED` にする。
 
 ### Step 7: ループ判定
 
 以下のいずれかを満たしたら **ループ終了 → Step 8 へ**:
 
-1. Step 4 で 🔴 / 🟡 いずれにも分類される issue が 0 件
-2. `iteration == MAX_ITERATIONS`（= 3）
-3. Step 6 で連続失敗が発生しユーザーが中断を選んだ
+1. Step 4 で 🔴 / 🟡 いずれにも分類される issue が 0 件 → `CLEAN`
+2. `iteration == MAX_ITERATIONS` → `MAX_ITER`（この周の修正は再レビューされていない）
+3. Step 6 で連続失敗が発生し、ユーザーが中断を選んだ、または `AUTO_YES == true` だった → `CHECK_FAILED`
 
 それ以外の場合は `iteration += 1` して **Step 2 へ戻る**。
 
@@ -287,25 +335,37 @@ Step 2 で集まった全 issue について、各 issue ごとに `Agent` ツ�
 以下を表示:
 
 - 周回数（何周回したか / 上限到達か / ゼロで自然終了か）
+- 差分の起点（`BASE_BRANCH` と、その決め方: `--base` / PR の base / default branch）
 - 各周で検出された 🔴 / 🟡 件数と修正した件数
 - 修正した issue の一覧（ファイル + 一行説明）
-- 🟢 参考扱い（score < 80）の一覧
+- 見送った 🟡（`AUTO_YES` で PR の目的から外れると判断したもの、ユーザーがスキップしたもの）と理由
+- 🟢 参考扱いの一覧
 - 最終の test / lint / build dryrun の結果
 - 注意: **commit / push は行わない**。必要であればユーザーに `/commit` や
-  `/ship` skill の利用を案内する
+  `/ship` skill の利用を案内する（`/auto-fix-review --mode local` から呼ばれた
+  場合は、呼び出し元が commit / push する）
+
+レポートの最後に、呼び出し元の skill が読み取るための結果行を **必ず** 次の形式で出力する:
+
+```
+LOCAL_REVIEW_RESULT: <CLEAN | MAX_ITER | CHECK_FAILED | NO_DIFF>
+LOCAL_REVIEW_COUNTS: iterations=<周回数> fixed=<修正した件数> last_red=<最終周の 🔴 件数> last_yellow=<最終周の 🟡 件数> deferred=<見送った 🟡 の件数>
+```
+
+`MAX_ITER` のときの `last_red` / `last_yellow` は、最終周で検出して修正したが再レビューしていない件数である。
 
 ## Notes
 
 - **`Agent` ツール呼び出しでは必ず `model` を明示する**:
   - Step 1.5b (変更サマリ): `model: "sonnet"`
-  - Step 2 (5 reviewer): `model: "sonnet"`
+  - Step 2 (6 reviewer): `model: "sonnet"`
   - Step 3 (scoring): `model: "sonnet"`
   - `model` 未指定だと Explore subagent はセッションのモデル（Opus / Fable など）で
     走り、並列数のぶんコストが膨らむ。読解・抽出・scoring は `sonnet` で足りるので、
     毎回明示してコストと品質を揃える
 - レビュー subagent には「build / typecheck は別途 CI で走るので、ここでは
   チェックしないし、それ由来の指摘はしない」と必ず伝えること
-- `gh` コマンドは Step 2 #4 と Step 0 のフォールバックでのみ使用する
+- `gh` コマンドは Step 2 #4 と Step 0（PR の base の取得、default branch のフォールバック）でのみ使用する
 - このスキルは Agent Teams を使わない。並列化は Skill 内からの `Agent` ツール
   並列呼び出しで行う
 - **使用コマンド一覧**（事前に `~/.claude/settings.json` の `permissions.allow`
@@ -313,8 +373,7 @@ Step 2 で集まった全 issue について、各 issue ごとに `Agent` ツ�
   - Git (read-only): `git symbolic-ref`, `git fetch`, `git diff`, `git log`,
     `git blame`, `git show`（過去リビジョンのみ）
   - GitHub CLI (read-only): `gh repo view`, `gh pr list`, `gh pr view`
-  - 検証（プロジェクトに応じて可変）: `yarn test`, `yarn lint`,
-    `yarn build:dryrun`, `yarn <workspace> build:dryrun`。`npm test` /
-    `pnpm test` 系の代替あり
+  - 検証（プロジェクトに応じて可変）: `pnpm test`, `pnpm lint`,
+    `pnpm <workspace> build:dryrun`。`yarn` / `npm` 系の代替あり
   - 内部ツール（harness の設定で allow 済みなことが多い）: `Read`, `Edit`,
     `Write`, `Agent`, `AskUserQuestion`, `TaskCreate`
