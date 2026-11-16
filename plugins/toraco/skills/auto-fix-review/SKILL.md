@@ -120,11 +120,19 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
 
 1. `$ARGUMENTS` を上記 Parameters に従って解析する。
 2. 対象 PR を確定する:
-   - 引数で指定されていればそれを使う
+   - 引数で指定されていればそれを使う。その PR を取得できなければ（番号の誤り・`gh` のエラー）、モードを問わず
+     **D (ERROR)** とする（PR なしの扱いにして current branch をレビューしない）
    - そうでなければ `gh pr view --json number,headRefName` で current branch の PR を検出
-   - 見つからない場合:
+   - 見つからない場合は、まず「PR が無い」のか「取得に失敗した」のかを区別する。`gh pr view` が
+     「no pull requests found」以外のエラー（認証・ネットワーク・GraphQL が使えない等）で失敗したときは、REST の
+     `gh api "repos/{owner}/{repo}/pulls?head={owner}:<current branch>&state=open" --jq '.[0].number'` で確かめ直す。
+     PR があればそれを使い、REST でも取得できなければ **D (ERROR)**。PR が無いと確かめられた場合だけ次へ進む:
      - `REVIEW_MODE == local` なら `NO_PR = true` として続ける（PR 作成前の手元レビュー）。対象は current branch とし、
        `headRefName` は `git branch --show-current` の値とする。detached HEAD で取れなければ **D (ERROR)**。
+       current branch が default branch（`git symbolic-ref refs/remotes/origin/HEAD` か `gh repo view` で取得）か
+       `main` / `master` / `develop`、または `--base` と同じブランチなら **D (ERROR)** とし、作業ブランチに切り替えて
+       （`git switch -c <作業ブランチ>`）から再実行するよう案内する（保護ブランチに修正を commit しないため。
+       起点と同じブランチでは `/local-review` が `NO_DIFF` を返し、何もレビューせずに A になってしまうため）。
        以降、PR を参照する手順（Step 0-8・0-9、Step L の push、`--final-review`）は `NO_PR` の分岐に従う
      - それ以外のモードではユーザーに通知して終了（PR 上のレビューを使うので PR が必要。PR が無い段階なら
        `--mode local` を案内する）
@@ -182,7 +190,8 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
    のコメントだけを読むため）。レビュー応答が別の login（`github-actions` 等）で投稿された場合（Step 1-3 の mention 手順 6 で検出）は、
    `/fix-review` がそれを読めないので **D (ERROR)** で終了し、workflow が Claude GitHub App の token で
    投稿するよう設定されているか確認を促す。
-8. **Stacked PRs の判定**（`NO_PR = true` なら `STACKED = false` として飛ばし、`--stack` は無視する）: PR の `stack` オブジェクトを取得する（stack に属さない PR では `null`。
+8. **Stacked PRs の判定**（`NO_PR = true` なら、stack の取得と判定だけを飛ばして `STACKED = false` とし、`--stack` は
+   無視する。この 8. の末尾にある「local なら 9. の後に Step L へ進む」は `NO_PR = true` でも適用する）: PR の `stack` オブジェクトを取得する（stack に属さない PR では `null`。
    リポジトリで Stacked PRs が有効でない場合も `null` になるか、フィールド自体が無い）:
    ```bash
    gh api "repos/{owner}/{repo}/pulls/<pr>" --jq '.stack'
