@@ -5,7 +5,7 @@ description: 親 issue の sub-issues を一括計画・実装し、1 issue 1 PR
 
 # Stack issues: $ARGUMENTS
 
-**使い方**: `/stack-issues <親 issue | issue の列> [--trunk <branch>] [--draft] [--revise=ask|yes|skip] [--until=plan|implement|revise|pr|review]`
+**使い方**: `/stack-issues <親 issue | issue の列> [--trunk <branch>] [--draft] [--revise=ask|yes|skip] [--review-mode=auto|mention|local] [--until=plan|implement|revise|pr|review]`
 
 例:
 
@@ -52,6 +52,7 @@ description: 親 issue の sub-issues を一括計画・実装し、1 issue 1 PR
 | `--trunk <branch>` | 自動判定（Step 0-3） | stack の土台にするブランチ（`develop`、epic ブランチなど） |
 | `--draft` | リポジトリの慣例 | PR を draft で作る |
 | `--revise=ask\|yes\|skip` | `ask` | `/revise-spec` → `/revise-tests` の扱い。`ask`=Step 3 で確認 / `yes`=両方 `--yes` で実行 / `skip`=実行しない |
+| `--review-mode=auto\|mention\|local` | 自動判定 | Step 7 で `auto-fix-review` に `--mode` として渡す。`local` なら PR 上のレビューを使わず `/local-review --yes` で手元で直し、各レイヤーへの push を 1 回にまとめる。省略時は `auto-fix-review` が auto / mention を自動判定する |
 | `--until=...` | `review` | どこまで進めるか。`plan`=Step 3 まで / `implement`=Step 4 まで / `revise`=Step 5 まで / `pr`=Step 6 まで / `review`=Step 7 まで |
 
 ## 完了条件
@@ -264,6 +265,7 @@ git push origin <upper-branch>        # fast-forward の push になる
 
 ### Step 7: 自動レビューと修正
 
+- `--review-mode` が指定されていれば、以下の `auto-fix-review` の `args` すべてに `--mode <値>` を付ける
 - `IS_NATIVE_STACK = true`: `Skill` ツールで `auto-fix-review` を `args: "<最下層の PR> --stack"` で呼ぶ。
   レイヤーごとの修正と最後の 1 回の cascade は `auto-fix-review` が行う
 - `IS_NATIVE_STACK = false`（base をつないだだけの PR）: `auto-fix-review` の `--stack` は効かないので、本 skill が

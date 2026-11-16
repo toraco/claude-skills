@@ -23,7 +23,7 @@ claude-skills/
 |---|---|
 | `commit` / `ship` | コミット・PR 作成・ブランチ退避 |
 | `check` / `bugfix` | テスト/リント/ビルド・バグ修正 |
-| `local-review` / `fix-review` / `auto-fix-review` | レビュー生成と指摘の反映 |
+| `local-review` / `fix-review` / `auto-fix-review` | レビュー生成と指摘の反映。`auto-fix-review --mode local` は PR 上のレビューを使わず手元で直し、push を 1 回にまとめる（重大度の基準は `_shared/review-severity.md`） |
 | `revise-spec` / `revise-tests` | 仕様書・テストの見直し |
 | `make-plan` / `grilling` | 計画立案・壁打ち |
 | `file-issue` | issue 起票 |

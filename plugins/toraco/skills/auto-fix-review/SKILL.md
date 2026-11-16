@@ -1,11 +1,11 @@
 ---
 name: auto-fix-review
-description: PR の Claude Code Review を待ち（自動レビュー未設定のリポジトリでは @claude メンションでレビューを依頼し）、High (🔴) / Medium (🟡) の指摘がなくなるまで /fix-review --yes を自動反復実行する。Stacked PRs では上位レイヤーの rebase を最後の 1 回にまとめ、CI の連鎖実行を抑える
+description: PR の Claude レビュー（自動レビューか @claude メンション）か、--mode local なら /local-review --yes の手元レビューで、🔴 / 🟡 の指摘がなくなるまで修正を自動反復する。Stacked PRs では上位レイヤーの rebase を最後の 1 回にまとめ、CI の連鎖実行を抑える
 ---
 
 # Auto Fix Review Loop: $ARGUMENTS
 
-**使い方**: `/auto-fix-review [pr-number] [--mode auto|mention] [--max-iterations N] [--wait-minutes N] [--max-reruns N] [--stack] [--max-cascades N]`
+**使い方**: `/auto-fix-review [pr-number] [--mode auto|mention|local] [--final-review] [--max-iterations N] [--wait-minutes N] [--max-reruns N] [--stack] [--max-cascades N]`
 
 ## Goal
 
@@ -31,6 +31,13 @@ Claude Code Review が PR に返した **High severity**（`### 🔴 バグ` ま
 本スキル自身が PR に `@claude` メンション付きのレビュー依頼コメントを投稿し、「レビュー依頼 → レビュー待機 →
 /fix-review --yes 実行 → push → 再レビュー依頼」を繰り返す（Step 0-6 でモードを判定し、Step 1-R で依頼する）。
 
+**local モード**（`--mode local`）では PR 上のレビューを使わない。`/local-review --yes` で手元でレビューと
+修正を指摘がなくなるまで繰り返し、修正を commit して **1 回だけ** push する（Step L）。PR 上のレビュー
+（GitHub Actions の run）も、修正の反復ごとの push で走る CI も起きないので、Actions の消費を抑えられる。
+`--final-review` を付けると、その後に PR 上のレビュー（auto / mention）を最終確認として受け、出た指摘は
+従来どおり `/fix-review --yes` で直す。重大度の基準は local / mention のどちらのレビューでも
+`${CLAUDE_SKILL_DIR}/../_shared/review-severity.md` にそろえる。
+
 対象 PR が GitHub の **Stacked PRs**（`main ← PR-A ← PR-B ← PR-C` のように各 PR が 1 つ下の PR のブランチを
 base にする連なり）の一員である場合は、**修正ループ中に上位レイヤーを rebase しない**（Step 0-8・Step S）。
 Stacked PRs では workflow が「全 PR が stack の base（例: `main`）を向いている」ものとして起動するため、
@@ -54,10 +61,15 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
 `$ARGUMENTS` を以下のように解釈する（順不同・全て省略可）。
 
 - `pr-number`: 数値トークン1個。対象 PR 番号（省略時は current branch から `gh pr view` で検出）
-- `--mode auto|mention`: レビュー起動方式を明示する（省略時は Step 0-6 で自動判定）
+- `--mode auto|mention|local`: レビュー起動方式を明示する（省略時は Step 0-6 で auto / mention を自動判定する。
+  local は自動判定では選ばれない）
   - `auto`: push を契機に自動でレビューが投稿されるのを待つ（従来の挙動）
   - `mention`: 本スキルが `@claude` メンション付きコメントでレビューを依頼し、その応答を待つ
-- `--max-iterations N`: 修正サイクルの最大反復回数（default 5）
+  - `local`: PR 上のレビューを使わず、`/local-review --yes` で手元でレビューと修正を行う（Step L）
+- `--final-review`: local モードで、手元のレビューが指摘なしで終わった後に、PR 上のレビュー（auto / mention を
+  Step 0-6 で自動判定）を最終確認として 1 回受ける。指摘が出れば従来の Step 1〜4 で直す。
+  local 以外のモードと `--stack` では無視する
+- `--max-iterations N`: 修正サイクルの最大反復回数（default 5）。local モードでは `/local-review` の周回数の上限として渡す
 - `--wait-minutes N`: 各レビュー待機の最大分数（default 10）
 - `--max-reruns N`: 1 回のレビュー待機あたりの review workflow 再実行回数の上限（default 2。
   workflow の初回実行と合わせて最大 3 回まで実行されることになる）。`0` を指定すると rerun 機構を無効化する。
@@ -74,10 +86,13 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
 - **A. SUCCESS**: 以下の両方を満たす
   - 最新の `author.login == "claude"` の集約レビューコメントに High severity 見出し（`🔴` または `High`）と Medium severity 見出し（`🟡` または `Medium`）のいずれも含まれない
   - `claude` 発の**未解決（`isResolved == false`）review thread** が 0 件
-- **B. MAX_ITER**: 反復回数が `--max-iterations` に到達
+  - local モード（`--final-review` なし）では、`/local-review` が `LOCAL_REVIEW_RESULT: CLEAN`（または `NO_DIFF`）で終わり、
+    修正があればその push まで済んでいること
+- **B. MAX_ITER**: 反復回数が `--max-iterations` に到達（local モードでは `LOCAL_REVIEW_RESULT: MAX_ITER`）
 - **C. TIMEOUT**: レビュー待機が `--wait-minutes` を超過しても新規レビューが到着せず、かつ rerun 対象の
   workflow run を特定できない（run 実行中・rerun しても状況が変わらない conclusion 等を含む）
-- **D. ERROR**: `/fix-review` がエラーで失敗、push に失敗、または `gh run rerun` の実行自体に失敗
+- **D. ERROR**: `/fix-review` がエラーで失敗、push に失敗、または `gh run rerun` の実行自体に失敗。
+  local モードでは `/local-review` が `CHECK_FAILED` で終わった、または結果行を出さなかった場合も含む
 - **E. NOT_CONVERGED**: Safety notes の収束チェックで「同一 issue 集合が 2 回連続検出」され、自動継続を停止
 - **F. REVIEW_MISSING**: review workflow は完了しているのにレビューコメントが投稿されず、
   rerun 上限（`--max-reruns`）に到達した（mention モードでは依頼の再投稿上限に到達した）
@@ -102,6 +117,8 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
    - そうでなければ `gh pr view --json number,headRefName` で current branch の PR を検出
    - 見つからなければユーザーに通知して終了
 3. `iteration = 0` で初期化する。
+   `REVIEW_MODE == local`（`--mode local`）の場合、PR 上のレビューを待たないので 4.〜7. は飛ばして 8. へ進む
+   （`--final-review` で PR 上のレビューに移るときに Step L-6 で実行する）。
 4. `baseline_ts` を取得する。集約コメントとインラインコメントの**両方**の最終更新時刻のうち、
    新しい方を採用する:
    ```bash
@@ -124,6 +141,7 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
    （`pull_request_review` / `pull_request_review_comment` は `pull_request` とは別物。部分一致で拾わない）。
 
    1. `--mode` が指定されていればそれを `REVIEW_MODE` とする（自動判定より優先）。
+      `local` の場合は 3. で飛ばすのでここには来ない（Step L-6 の `--final-review` では `--mode` を無視して 2. 以降で判定する）。
       ただし mention を指定したのに下記 3. の mention workflow が見つからない場合も、そのまま mention で進めてよい
       （Workflow を使わない Claude のレビュー機能がメンションに応答するケースがあるため）。
       このとき `MENTION_WORKFLOW_NAME` は未特定として扱う
@@ -172,6 +190,7 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
      上位レイヤーには一切触れない。終了時、Step 5 で「上位レイヤーの rebase が保留になっていること」と
      その解消方法を案内する
    - `STACKED = true` かつ `--stack` 指定あり → **stack モード**。Step 1 へは進まず **Step S** へ進む
+   - stack モードでなく `REVIEW_MODE == local` の場合は、9. の後に Step 1 ではなく **Step L** へ進む
 9. **作業ツリーを対象 PR の head に合わせる**（`/fix-review` は current branch に commit して push するため）。
    current branch が既に対象 PR の head で origin と一致していれば何もしない。切り替えが必要なときだけ:
    ```bash
@@ -181,6 +200,40 @@ B・C の CI は起動しない。そこで本スキルは次のように動く:
    git merge --ff-only "origin/<headRefName>"   # 失敗（ローカルが分岐している）なら D (ERROR)
    ```
    stack モードでは Step S-2 がレイヤーごとにこの手順を行う。
+
+### Step L: 手元でレビューと修正を繰り返す（local モードのみ）
+
+`REVIEW_MODE == local` のとき、Step 1〜4 の代わりにこの Step を実行する。PR 上のレビューは依頼も待機もしない。
+stack モードでは Step S-2 がレイヤーごとにこの Step を呼ぶ。
+
+1. **差分の起点を決める**: `REVIEW_BASE=$(gh pr view <pr> --json baseRefName -q .baseRefName)`。
+   PR 上のレビューと同じく PR の base との差分を見る（Stacked PRs では 1 つ下のレイヤーのブランチになる）。
+   取得できなければ **D (ERROR)**
+2. **作業ツリーを確かめる**: `git status --porcelain` が空であること（Step 0-9 で確認済みだが、stack モードで
+   レイヤーを切り替えた後も確認する）。空でなければ **D (ERROR)**。勝手に stash しない
+3. **`/local-review` を呼ぶ**: `Skill` ツールで `local-review` を
+   `args: "--yes --base <REVIEW_BASE> --max-iterations <max-iterations>"` で呼ぶ。
+   `/local-review` は修正を working tree に残し、commit も push もしない
+4. **結果を読む**: 出力末尾の `LOCAL_REVIEW_RESULT:` 行と `LOCAL_REVIEW_COUNTS:` 行を読み取り、Step 5 のレポート用に
+   控える。結果行が無ければ **D (ERROR)**
+   - `CHECK_FAILED`: テスト・リント・ビルドが通らない状態なので commit しない。working tree はそのまま残し、
+     失敗したチェックを報告して **D (ERROR)**
+   - `CLEAN` / `MAX_ITER` / `NO_DIFF`: 次へ
+5. **修正を 1 回だけ push する**: `git status --porcelain` が空でなければ（= 修正がある）:
+   1. `git add -A` で修正をステージする（2. で作業ツリーが空だったので、ここにあるのは `/local-review` の修正だけ）
+   2. `Skill` ツールで `commit` を呼び、プロジェクトの慣例に沿って commit する。CLAUDE.md が構造の変更と振る舞いの
+      変更を別 commit にするよう求めている場合は分けて commit する
+   3. `git push origin HEAD:<headRefName>` で fast-forward push する（force push はしない）。拒否されたら
+      **D (ERROR)**。`STACKED = true` でも上位レイヤーには触れない
+   4. push の回数を `local_pushes` に数える（Step 5 のレポート用）
+6. **終了ステータスを決める**:
+   - `MAX_ITER` → **B (MAX_ITER)**。最終周の修正は再レビューしていないことを Step 5 で伝える
+   - `CLEAN` / `NO_DIFF` で `--final-review` なし、または stack モード → **A (SUCCESS)**
+   - `CLEAN` / `NO_DIFF` で `--final-review` あり → PR 上のレビューに移る。Step 0 の 4.〜7. を実行して
+     `REVIEW_MODE` を auto / mention から自動判定し直し（`--mode local` は無視する）、`iteration = 0` から
+     **Step 1** へ進む。以降は従来どおり、指摘があれば `/fix-review --yes` で直す。
+     `REVIEW_MODE = none` なら PR 上のレビューは受けられないので、手元のレビュー結果だけで **A (SUCCESS)** とし、
+     その旨を Step 5 に書く
 
 ### Step 1 (loop entry): 最新レビュー取得
 
@@ -221,12 +274,26 @@ review thread 側は `/fix-review` が対応済みスレッドを Resolve する
 
 1. 以下の本文でコメントを投稿する（`<TRIGGER_PHRASE>` は Step 0-6 で特定した値。既定 `@claude`）。
    出力フォーマットを `/fix-review` Step 2-1 の解析ルールに合わせるよう明示し、レビュアーにコードを
-   変更させない（mention 応答の workflow は commit / push できる権限を持つことが多いため）:
+   変更させない（mention 応答の workflow は commit / push できる権限を持つことが多いため）。
+   重大度の基準は `${CLAUDE_SKILL_DIR}/../_shared/review-severity.md` の要約を本文に直接書く
+   （Actions 上のレビュアーはプラグインのファイルを読めないため。基準を変えたらここも合わせて直す）:
    ````bash
    gh pr comment <pr> --body-file - <<'EOF'
    <TRIGGER_PHRASE> この PR の差分全体をレビューしてください。
 
    - **レビューのみ**を行い、コードの変更・commit・push・ブランチ作成は一切しないでください。
+   - 重大度は、どの観点で見つけたかではなく影響の大きさで、次の基準で決めてください。
+     - 🔴 バグ: マージすると実害が出るもの。現実にありうる入力での誤動作・例外、データの消失・破損・二重登録、
+       悪用できるセキュリティの穴、過去の修正の巻き戻し、既存の呼び出し元や API 利用者・DB マイグレーションとの
+       互換性の破壊、何も確かめていないテスト。どんな入力・状態で何が壊れるかを具体的に書いてください
+     - 🟡 設計上の問題: 今は壊れないが、直さずにマージすべきでないもの。CLAUDE.md や設計ドキュメントに明記された
+       規約への違反、振る舞いを変えたのにテストがない、現実的なデータ量で問題になるパフォーマンス、弱くなった防御、
+       正本の二重化や責務の漏れ。規約の引用か、放置したときに起きることを根拠として書いてください
+     - 🟢 指摘・改善提案: 直さなくてもマージしてよいもの（命名、読みやすさ、必須でないリファクタリング、
+       起きるか不確かな懸念）
+     - 指摘しないもの: lint・型チェック・テストで機械的に見つかるもの、差分の外にもともとあった問題、
+       PR の目的そのものである意図した振る舞いの変更
+     - 迷ったら低いほうにしてください。🔴 で壊れ方を書けないものは 🟡 に、🟡 で根拠を示せないものは 🟢 にします
    - 結果はこのコメントへの返信として、次のフォーマットで出力してください。該当する指摘が 1 件も無い
      重大度の見出しは**出力しない**でください（見出しの有無で指摘の有無を判定しています）。
 
@@ -431,7 +498,7 @@ rebase すれば、上位レイヤーで走るのは cascade 後の 1 回と、�
 2. `iteration` / `rerun_count` / `baseline_ts`（Step 0-4 と同じ手順で再取得。ただし `await_new_review = true`
    のレイヤーは Step S-3 で控えた値を使う）/ 収束チェック用の issue 集合を、そのレイヤー用に初期化する。
    `rerun_total` / `requests_total` は stack 全体で累計する
-3. Step 1〜4 を実行する。完了条件 A〜G はレイヤー単位で判定し、A なら次のレイヤーへ進む。
+3. Step 1〜4 を実行する（local モードでは Step L を実行する）。完了条件 A〜G はレイヤー単位で判定し、A なら次のレイヤーへ進む。
    Step 1-1 で cascade 後のレビュー待ちに入ったら、そのレイヤーの `await_new_review` は `false` に戻す
 4. A 以外で終わったら、そのステータスを stack 全体の終了ステータスとして **Step 5** へ進む
    （上のレイヤーは処理しない。理由は Completion conditions 末尾を参照）
@@ -493,6 +560,8 @@ rebase すれば、上位レイヤーで走るのは cascade 後の 1 回と、�
      ```
      全ての commit が `=`（patch 同一）で、conflict の解消もしていないレイヤーは **差分不変**とする
    - auto モード: `R` の全レイヤーで `await_new_review = true`（push で自動レビューが走るので、その結果を確認する）
+   - local モード: mention モードと同じく、差分が変わったレイヤーだけ `await_new_review = true` にする。
+     Step S-2 ではそのレイヤーで Step L をもう一度実行する（Step 1-1 の待機には入らない）
    - mention モード: 差分が変わったレイヤーだけ `await_new_review = true` にして再レビューを依頼する。
      差分不変のレイヤーは、直前のレビューが同じ差分に対するものなので再依頼せず、処理済み（A）として扱う
      （依頼コメントと応答 workflow の実行を 1 回分節約する）
@@ -507,8 +576,13 @@ cascade 後のレビューで指摘が出て修正したときだけ、そのレ
 終了時に以下を表示する:
 
 - 終了ステータス（A / B / C / D / E / F / G / H / I）
-- レビューモード（`auto` / `mention`）と判定根拠（`--mode` 指定 / 検出した workflow 名 / auto からのフォールバック）。
+- レビューモード（`auto` / `mention` / `local`）と判定根拠（`--mode` 指定 / 検出した workflow 名 / auto からのフォールバック）。
   mention モードの場合は投稿したレビュー依頼コメントの件数 `requests_total`
+- local モードの場合: `/local-review` の結果行（`LOCAL_REVIEW_RESULT` と `LOCAL_REVIEW_COUNTS`）、差分の起点
+  `REVIEW_BASE`、修正を push した回数 `local_pushes`、`/local-review` が見送った 🟡 とその理由。
+  `MAX_ITER` で終わった場合は、最終周の修正が再レビューされていないことと、再実行（`/auto-fix-review --mode local`）または
+  `--final-review` での確認を案内する。`--final-review` を指定した場合は、その後の PR 上のレビューのモードと結果、
+  stack モードのため `--final-review` を無視した場合はその旨
 - 実行した反復回数
 - 各反復で修正した issue のサマリ（/fix-review の出力を集約）
   - 反復 0 回で SUCCESS した場合は「修正なし（初回時点で High/Medium 指摘なし）」と明示する
@@ -539,6 +613,12 @@ cascade 後のレビューで指摘が出て修正したときだけ、そのレ
     `anthropics/claude-code-action` のバージョンや設定変更の有無
 
 ## Safety notes
+
+- **local モードの push は最後の 1 回だけ**（レイヤーごと、cascade 後の再レビューごとに 1 回）。`/local-review` の周回の
+  途中で commit・push しない。途中で push すると、その都度 CI と（auto モードのリポジトリでは）PR 上のレビューが走り、
+  local モードにした意味がなくなる
+- local モードでも、PR に `pull_request` トリガの自動レビューが設定されているリポジトリでは、最後の push で PR 上の
+  レビューが 1 回走る。本スキルはその結果を待たない（`--final-review` を付けた場合だけ待って対応する）
 
 - **Stacked PRs で禁止する操作**（`STACKED = true` の間。Step S-3 の cascade を除く）:
   上位レイヤーの rebase、force push、`gh stack sync` / `gh stack rebase` / `gh stack push`、
