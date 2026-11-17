@@ -26,7 +26,7 @@ claude-skills/
 | `local-review` / `fix-review` / `auto-fix-review` | レビュー生成と指摘の反映。`auto-fix-review --mode local` は PR 上のレビューを使わず手元で直し、push を 1 回にまとめる。PR 作成前でも使える（重大度の基準は `_shared/review-severity.md`） |
 | `revise-spec` / `revise-tests` | 仕様書・テストの見直し |
 | `make-plan` / `grilling` | 計画立案・壁打ち |
-| `file-issue` | issue 起票 |
+| `file-issue` | issue 起票。1 PR に収まらない課題や複数機能の入力（要件定義書など）は、指示がなくても親 issue と sub-issues に分ける |
 | `stack-issues` | 親 issue の sub-issues を一括計画（確認は最初に 1 回）→ 実装 → revise → 1 issue 1 PR の Stacked PRs 作成 → auto-fix-review |
 | `land` | レビュー済み PR のマージ → マージ後 CI（デプロイ）監視 → 動作確認 → 関連 issue のクローズ |
 | `release` / `fix-ci` | リリース・CI 修復 |
