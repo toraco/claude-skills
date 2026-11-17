@@ -120,7 +120,8 @@ description: バグや課題について、プロジェクトのコードを調�
   - `## 現状` — 関係する既存コードを `file:line` で示す（必要なとき）
   - `## 受け入れ条件` — PR をマージしてよい状態を、確かめられる形で箇条書きにする（テストの観点を含める）
   - `## 依存` — 先にマージされている必要がある issue を `- #番号（理由）` で列挙する（無ければ「なし」）。
-    親の表と同じ内容にする。`/stack-issues` がレイヤー順を決めるのに使う
+    親の表と同じ内容にする。起票時に GitHub の依存関係（blocked by）にも同じものを設定する（Step 6 の E）。
+    `/stack-issues` は両方を読んでレイヤー順を決める
   - `## Related` — 先頭に `- #<親>（親 issue）` を書く
 - **済んだ作業の記録用 sub-issue**: 既存 issue の一部を PR で対応済みの場合（構成の判定の 3）、その分も記録用の
   sub-issue にして close するかを確認時に聞く。作る場合は本文に `## 対応内容`（PR・リリースの番号と確認結果）を書き、
@@ -253,19 +254,28 @@ GitHub への反映は共有システムに対する外部公開アクション�
      ```
    - 既存 issue を流用して sub-issue にする場合は、`gh api "repos/{owner}/{repo}/issues/<n>" --jq .id` で id を取って同じように紐付ける
      （GitHub MCP の `sub_issue_write` でもよい）
-2. 作るたびに `キー → {number, id}` を記録する（`.git/file-issue/<短い名前>/created.json` など）。途中で失敗したら、
+2. sub-issue を作るたびに、`## 依存` に挙げた issue を GitHub の依存関係（blocked by）にも設定する。依存の順に作っているので、
+   依存先はすでに作成済み（または既存 issue）で id がわかる。`issue_id` には依存先の issue **番号ではなく REST の `id`** を渡す:
+   ```bash
+   gh api -X POST "repos/{owner}/{repo}/issues/<sub-issue-number>/dependencies/blocked_by" -F issue_id=<依存先の-id>
+   ```
+   既存 issue を sub-issue として流用し、その issue に依存がある場合（例: 既存の #2610 が新しい sub-issue に依存する）も同じように設定する。
+   API が使えない（404 / 403 など）場合は設定をあきらめて起票を続け、本文の `## 依存` だけを残す。報告でその旨を伝える。
+3. 作るたびに `キー → {number, id}` を記録する（`.git/file-issue/<短い名前>/created.json` など）。途中で失敗したら、
    記録済みのキーを飛ばして再開する。**同じ issue を二重に作らない。** 失敗したらループを止め、原因を直してから再開する。
-3. 全件を作り終えたら、残った `{{キー}}`（主に親の表）を `#番号` に置き換えて更新する（`gh issue edit <number> --body-file ...`）。
-4. 確かめる:
+4. 全件を作り終えたら、残った `{{キー}}`（主に親の表）を `#番号` に置き換えて更新する（`gh issue edit <number> --body-file ...`）。
+5. 確かめる:
    - 各親の sub-issue の件数が予定と一致する（`gh api "repos/{owner}/{repo}/issues/<parent>" --jq '.sub_issues_summary.total'`、または `issue_read` の `get_sub_issues`）
    - 本文に `{{` が残っていない
    - Issue Type・ラベルが予定どおり
-5. 記録用 sub-issue を作った場合は、対応状況をコメントしてから close する（`state_reason: completed`）。
+   - 依存を設定した sub-issue で、`issue_dependencies_summary.blocked_by` の数が `## 依存` の件数と一致する
+     （`gh api "repos/{owner}/{repo}/issues/<n>" --jq '.issue_dependencies_summary'`）
+6. 記録用 sub-issue を作った場合は、対応状況をコメントしてから close する（`state_reason: completed`）。
    デプロイなど結果待ちのものは、結果が出てから close する。
-6. 結果を報告する: 親 issue の番号と URL、sub-issue の番号・内容・依存の表、作らなかった issue（A / B）とその理由。
+7. 結果を報告する: 親 issue の番号と URL、sub-issue の番号・内容・依存の表、作らなかった issue（A / B）とその理由。
    互いに依存しない最初の sub-issue を挙げ、`/stack-issues #<親>` で sub-issues を 1 issue 1 PR の Stacked PRs で実装できることを案内する。
-   依存は本文に書いただけで GitHub の依存関係（blocked by）は設定していないことも 1 行添える。
-7. 下書きを `.git/file-issue/` に置いた場合は、確認が済んだら削除してよい（削除できなくてもコミットされないので害はない）。
+   blocked by を設定できなかった場合は、本文の `## 依存` にだけ書いたことを 1 行添える。
+8. 下書きを `.git/file-issue/` に置いた場合は、確認が済んだら削除してよい（削除できなくてもコミットされないので害はない）。
 
 ## Non-goals
 
