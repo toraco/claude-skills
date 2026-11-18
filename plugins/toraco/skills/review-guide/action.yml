@@ -26,7 +26,7 @@ runs:
   using: composite
   steps:
     - shell: bash
-      run: node "$GITHUB_ACTION_PATH/apply.mjs"
+      run: node "$GITHUB_ACTION_PATH/scripts/apply.mjs"
       env:
         VIEWED_TOKEN: ${{ inputs.viewed-token }}
         TARGET_REPO: ${{ inputs.repo }}

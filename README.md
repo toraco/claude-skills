@@ -28,6 +28,7 @@ claude-skills/
 | `make-plan` / `grilling` | 計画立案・壁打ち |
 | `file-issue` | issue 起票。実装タスクが複数の PR に分かれるなら、指示がなくても親 issue と sub-issues（1 issue 1 PR）に分けて起票し、`stack-issues` に渡せる形にする |
 | `stack-issues` | 親 issue の sub-issues を一括計画（確認は最初に 1 回）→ 実装 → revise → 1 issue 1 PR の Stacked PRs 作成 → auto-fix-review |
+| `review-guide` | 人がレビューする前の下準備。PR の変更ファイルを必読・流し読み・見なくてよいに仕分けたガイドを PR にコメントし、見なくてよいファイルに Viewed を付ける。`--stack` で Stacked PRs をまとめて処理する（Viewed の仕組みは下の「review-guide の Viewed」を参照） |
 | `land` | レビュー済み PR のマージ → マージ後 CI（デプロイ）監視 → 動作確認 → 関連 issue のクローズ |
 | `release` / `fix-ci` | リリース・CI 修復 |
 | `garden-deps` | 依存パッケージのガーデニング（Renovate の手動分・管轄外の棚卸しと一括更新） |
@@ -115,6 +116,30 @@ set -e
 >
 > PR の作成やマージは GitHub MCP ツール（`mcp__github__*`）で行う。GitHub 上の stack は `gh api "repos/<owner>/<repo>/stacks?pull_request=<PR 番号>"` で取れ、各 PR の head ブランチを fetch してから `gh stack init --base <trunk> <下から順のブランチ...>` すれば、ローカルでの追跡を始められる（`checkout` の代わり）。
 
+## review-guide の Viewed
+
+`review-guide` は、ガイドの「見なくてよい」に挙げたファイルに、レビューする本人として Viewed を付ける。Viewed は GitHub の GraphQL API（`markFileAsViewed`）でしか付けられないので、実行する場所で手段が分かれる。
+
+| 実行する場所 | 手段 |
+|---|---|
+| ローカル（`gh` で GraphQL が使える） | skill が `scripts/apply.mjs` を `gh auth token` のトークンで直接実行する |
+| クラウドセッション（GraphQL が使えない） | skill が、PAT を置いたリポジトリの workflow を `workflow_dispatch` で起動する |
+
+クラウドから使うには、workflow と PAT を置くリポジトリ（runner）を用意する。toraco では private の `toraco/dotclaude` に置いている（設定の手順はそのリポジトリの `auto-viewed/README.md`）。workflow は、この skill のディレクトリを composite action として呼ぶ:
+
+```yaml
+- uses: toraco/claude-skills/plugins/toraco/skills/review-guide@<commit SHA>
+  with:
+    repo: ${{ inputs.repo }}
+    pr-number: ${{ inputs.pr }}
+    viewed-token: ${{ secrets.VIEWED_TOKEN_TORACO }}
+```
+
+- PAT は fine-grained で、対象リポジトリの Pull requests の Read and write だけを付ける。fine-grained PAT は org をまたげないので、org ごとに 1 つ要る
+- このリポジトリは public なので、workflow をここに置かない（Actions のログが公開され、対象のリポジトリ名が残る）
+- スクリプトは、PAT の持ち主が投稿したガイドだけを読む。ガイドを書いた後に PR が更新されていれば、一覧を使わない。`.github/**` と `**/migrations/**` には Viewed を付けない
+- スクリプトのテストは `node --test plugins/toraco/skills/review-guide/scripts/` で実行する
+
 ## 同梱 hooks
 
 | hook | 内容 |
@@ -151,5 +176,5 @@ hook は plugin に入っているので、ローカルでもクラウドセッ�
 ```
 claude plugin validate .
 claude plugin marketplace add toraco/claude-skills && claude plugin install toraco@toraco-skills
-claude plugin details toraco   # Skills (17) と出れば OK
+claude plugin details toraco   # Skills (18) と出れば OK
 ```
