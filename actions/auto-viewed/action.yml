@@ -1,0 +1,37 @@
+name: Auto Viewed
+description: レビューガイドが「見なくてよい」としたファイルに、トークンの持ち主として Viewed を付ける
+inputs:
+  repo:
+    description: 対象のリポジトリ（owner/name）
+    required: true
+  pr-number:
+    description: 対象の PR 番号
+    required: true
+  viewed-token:
+    description: Viewed を付ける本人の PAT（対象リポジトリの Pull requests の読み書き）
+    required: true
+  never-skip:
+    description: どの理由でも Viewed を付けないパスの glob（改行区切り）。既定の .github/** と **/migrations/** に足す
+    default: ''
+  generated:
+    description: 生成物として Viewed を付けるパスの glob（改行区切り）
+    default: ''
+  dry-run:
+    description: true なら Viewed を付けずに件数だけ出す
+    default: 'false'
+  log-paths:
+    description: true ならファイルのパスをログに出す。公開リポジトリで動かすときは false のままにする
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: node "$GITHUB_ACTION_PATH/apply.mjs"
+      env:
+        VIEWED_TOKEN: ${{ inputs.viewed-token }}
+        TARGET_REPO: ${{ inputs.repo }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        NEVER_SKIP: ${{ inputs.never-skip }}
+        GENERATED: ${{ inputs.generated }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        LOG_PATHS: ${{ inputs.log-paths }}
