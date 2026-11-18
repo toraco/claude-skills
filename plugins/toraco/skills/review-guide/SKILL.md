@@ -10,7 +10,7 @@ description: PR の変更ファイルを必読・流し読み・見なくてよ�
 例:
 
 - `/review-guide 2595` — PR 1 本のガイドを作り、見なくてよいファイルに Viewed を付ける
-- `/review-guide 2593 --stack` — 2593 が属する stack の open な PR をすべて処理する
+- `/review-guide 2593 --stack` — 2593 が属する stack の open な PR をすべて処理する（stack のどの PR を指定してもよい）
 - `/review-guide 2595 --dry-run` — ガイドを会話に出すだけで、コメントも Viewed も付けない
 
 ## Goal
@@ -71,7 +71,12 @@ description: PR の変更ファイルを必読・流し読み・見なくてよ�
    `gh api "repos/{owner}/{repo}/pulls?head={owner}:$(git branch --show-current)&state=open" --jq '.[0].number'`。無ければ報告して終了する。
 3. `--stack` があれば、stack の open な PR を下から順にすべて対象に加える:
    `gh api "repos/{owner}/{repo}/stacks?pull_request=<pr>" --jq '.[0].pull_requests[] | select(.state == "open") | .number'`。
-   取得できない場合は、各 PR の base ブランチを head に持つ open な PR をたどって集める。stack に属さなければ、指定された PR だけを対象にする。
+   結果が空か取得できない場合（クラウドセッションで作った、base をつないだだけの PR など）は、open な PR の一覧から
+   **上下の両方向** にたどって集める。下へは「指定された PR の base ブランチを head に持つ PR」を、上へは
+   「指定された PR の head ブランチを base に持つ PR」を、見つからなくなるまで繰り返す:
+   `gh api --paginate "repos/{owner}/{repo}/pulls?state=open&per_page=100" --jq '.[] | {number, head: .head.ref, base: .base.ref}'`。
+   どの PR を指定しても、同じ stack の全レイヤーが対象になる。1 本も見つからなければ、指定された PR だけを対象にする。
+   集めた PR の一覧（下から順）を、Step 1 に進む前に表示する。
 4. 対象リポジトリの CLAUDE.md / AGENTS.md を読み、次を控える: PR コメントの言語と推敲ルール（例: 「/yomiyasu で推敲してから投稿する」）、必ずレビューすると書かれたパス。
 5. 作業用のディレクトリを `.git/review-guide/<pr>/` に作る（commit されない）。
 

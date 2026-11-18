@@ -290,7 +290,7 @@ git push origin <upper-branch>        # fast-forward の push になる
 - **マージ前チェックリスト**: 各計画から集めた人手の作業（secret・環境変数・インフラ資源・データ移行など）。
   本番に書き込む作業は実行していないことを明記する
 - **マージの案内**:
-  - 人がレビューする前に `/review-guide <最下層の PR> --stack` を実行すると、各 PR に読む順のガイドが付き、
+  - 人がレビューする前に `/review-guide <stack のいずれかの PR> --stack` を実行すると、各 PR に読む順のガイドが付き、
     見なくてよいファイルに Viewed が付く
   - 人がすべてのレイヤーをレビューして Approve してから、**stack をまとめて 1 回でマージする**（レイヤーごとにマージしない）。
     ネイティブの stack なら `gh stack merge <最上位の PR>` または UI のマージ
