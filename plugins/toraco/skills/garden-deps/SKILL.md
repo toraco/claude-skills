@@ -5,13 +5,15 @@ description: Renovate が自動マージしない依存更新と Renovate 管轄
 
 # Garden deps: $ARGUMENTS
 
-**使い方**: `/garden-deps [--until=plan|pr|dev|release] [--auto] [--only=<#PR|pkg,...>] [--skip=<#PR|pkg,...>] [--base=develop] [context]`
+**使い方**: `/garden-deps [--until=plan|pr|dev|release] [--auto] [--only=<#PR|pkg,...>] [--skip=<#PR|pkg,...>] [--base=develop] [--majors=skip|stack] [--max-majors=<n>] [context]`
 
 ## Goal
 
 溜まった依存更新を「棚卸しされ、採否が根拠つきで決まり、採用分が追従修正込みで 1 本の PR に載って CI を通り、見送り分は理由とともに次回へ引き継がれた」状態にする。`--until` に応じて、dev 環境への反映確認と本番リリース（`release` skill）への引き継ぎまで進める。
 
 月次で手作業していた「Renovate の手動レビュー PR を順にマージ → 破壊的変更に追従 → dev で確認 → develop から main へリリース」の置き換え。Renovate は patch や devDeps の minor を自動マージするので、**この skill の対象は Renovate が人に残したものと、Renovate がそもそも見ていないもの**。
+
+`--majors=stack` を付けると、major にも毎月追いつくために、ガーデニング PR を最下層にして、その上に major を 1 パッケージ（またはピア依存の組）1 PR の Stacked PRs として積む（Step 3b）。既定の `--majors=skip` では、major は従来どおり記録 issue に見送りとして残すだけにする。
 
 **この skill の本体は Step 2 の影響調査**。バージョン番号だけで「minor だから安全」と判断せず、リリースノートの破壊的変更とこのリポジトリでの使われ方を突き合わせる。
 
@@ -22,6 +24,7 @@ description: Renovate が自動マージしない依存更新と Renovate 管轄
 - 溜まっている依存更新の量と危険度を見積もりたいとき（`--until=plan`。何も書き込まない）
 - 作ったガーデニング PR の続き（develop へのマージ → dev 確認 → リリース PR）を進めたいとき（`--until=dev` / `--until=release` で再入）
 - セキュリティ更新など特定の更新だけ急いで出したいとき（`--only`）
+- major の更新も毎月少しずつ進めたいとき（`--majors=stack`。定期実行の `--auto` と併用できる）
 
 使わない場面:
 
@@ -38,6 +41,8 @@ description: Renovate が自動マージしない依存更新と Renovate 管轄
 | `--only` | なし | 対象をこの PR 番号 / パッケージ名に絞る |
 | `--skip` | なし | 対象から外す PR 番号 / パッケージ名 |
 | `--base` | Renovate の `baseBranches`（無ければ `develop`） | ガーデニング PR のマージ先（統合ブランチ） |
+| `--majors=skip\|stack` | `skip` | major の扱い。`skip`=見送りとして記録するだけ / `stack`=ガーデニング PR の上に 1 パッケージ 1 PR で積む（Step 3b） |
+| `--max-majors=<n>` | `5` | `--majors=stack` で 1 回に積む major の層の上限。ガーデニング PR を含めて 6 層を超えないようにする（レビューと conflict の負担が大きくなるため） |
 | `context` | なし | 今回の方針の補足（「major は見送り」「nodemailer は今回やる」など） |
 
 ## ワークフロー
@@ -45,9 +50,15 @@ description: Renovate が自動マージしない依存更新と Renovate 管轄
 ### Step 0: 前提の確認と再入判定
 
 - `git fetch origin --prune`。作業は `--base` の最新から切った worktree かクリーンな作業ツリーで行う。未 commit の変更がある作業ツリーで始めない
+  - `--until=plan` のように書き込まない実行では、作業ツリーを切り替えず、`git grep <pat> origin/<base>` / `git show origin/<base>:<path>` で base の最新を読む。手元のブランチが base より古いと、使われ方の件数を誤る
+- `gh` が使えない環境（クラウドセッションなど）では、GitHub の読み書きは GitHub MCP ツールで行う。リリースノートは `raw.githubusercontent.com` の CHANGELOG か、`npm pack <pkg>@<ver>` で取り出した中身（scratchpad に置く）で読む
 - **今月のガーデニング PR が既にあるか**: `gh pr list --state all --search "head:claude/gardening-$(date +%Y%m)" --json number,state,headRefName`
   - open → 新しく作らず、その PR の続きから再入する（Step 3 の追加取り込み、または Step 5 以降）
   - merged → Step 5（dev 確認）から再入する
+  - ブランチ名が慣例と違う回もあるので、記録 issue の最新コメントにある PR 番号と、タイトル（`パッケージガーデニング YYYY-MM`）でも探す
+- **`--majors=stack` のとき、前回までの major の層が残っているか**: `gh pr list --state open --limit 100 --json number,headRefName,baseRefName,title --jq '.[] | select(.headRefName | test("^claude/gardening-.*-major-"))'` で `claude/gardening-*-major-*` の open PR を探す
+  - 残っている層は新しく作り直さない。Step 2 でその major を候補から外し、報告と記録 issue に「前回の層 #N がレビュー待ち」と書く
+  - 残っている層の base が既にマージされたブランチ（前回のガーデニング PR など）を指していても、`--auto` では付け替えない。付け替えが必要なことを報告に書く
 - **記録 issue を読む**: タイトルが `Package gardening log` の open issue（無ければ初回）。最新コメントに前回の見送り一覧と理由・再開条件がある。**前回見送った理由がまだ有効かを Step 2 で再判定する**（例: 「上流のバグ待ち」が解消していれば今回採る）
 - このリポジトリの検証手段を**推測せず実物から**把握する:
   - CI の PR 用 workflow（`.github/workflows/` のうち `pull_request` で走るもの）が実行している lint / test / typecheck / build のコマンド
@@ -60,11 +71,13 @@ description: Renovate が自動マージしない依存更新と Renovate 管轄
 次の 4 つの供給源から候補を集め、1 つの表にする。
 
 1. **Renovate の open PR**: `gh pr list --author app/renovate --state open --json number,title,headRefName,labels,createdAt,mergeable`
+   - **現行版は base ブランチの依存定義（`package.json` 等）から取る**。Dashboard や古い PR に書かれた現行版は、base で既に上がっていることがある
    - 各 PR の差分（`gh pr diff <n> --name-only` と依存定義の変更行）から、パッケージ・現行版・更新後版・更新種別（patch / minor / major）・`[SECURITY]` の有無を取る
    - 同じパッケージに複数 PR がある（例: `axios-1.x` と `axios-1.x-lockfile`）ときは新しい方に寄せ、古い方は Step 3 で閉じる候補にする
 2. **Dependency Dashboard**（`Dependency Dashboard` issue の本文）:
    - `Pending Status Checks` / `Rate-Limited` / `Awaiting Schedule` / `Pending Approval`: まだ PR になっていない更新。候補に入れ、Step 3 ではパッケージマネージャで直接上げる
      - **滞留の大半はここにある**。`prConcurrentLimit` で PR が数件しか開かないため、open PR だけ見ると実態を大きく見誤る（例: open PR 7 件に対し Rate-Limited 32 件、うち major 19 件）。各行は `<!-- unlimit-branch=renovate/... -->` / `<!-- approvePr-branch=... -->` のコメントで識別できるので、本文を grep するときにこれらの行を落とさない
+     - `Pending Status Checks` の行で `renovate/...` ブランチが既にあるものは、Step 3 では PR があるものと同じくそのブランチを merge する
      - グループ名だけの行（`Update hono (...)`）は対象パッケージが括弧内にある。更新後の版は行に書かれていないことがあるので、レジストリで最新を引く
    - `PR Closed (Blocked)`: 過去に閉じた更新（例: major を見送って close）。**閉じた理由（その PR のコメント・記録 issue）がまだ有効か**を確認し、無効なら候補に戻す
    - `Deprecations / Replacements`・`Config Migration Needed`: 依存更新ではないので Step 2 の表には入れず、報告と記録 issue に載せるだけにする
@@ -82,7 +95,24 @@ description: Renovate が自動マージしない依存更新と Renovate 管轄
 
 候補ごとに次を調べる。major・`[SECURITY]`・ランタイム依存（`dependencies`）を優先し、devDeps の minor は軽めでよい。
 
-**先に移行規模で振り分ける**。UI フレームワークやフレームワーク本体の major（例: Chakra UI v2→v3、React 19 / Next の major、Prisma の major、ESLint の flat config 移行、zod 4、TypeScript のネイティブ版）は、ガーデニングの枠に収まらない独立した移行案件なので、深い調査をせずに「見送り（個別移行）」とする。記録 issue に載せ、`file-issue` で単独の issue にするかをユーザーに提案する（`--auto` では提案だけ書く）。
+**先に移行規模で振り分ける**。
+
+- `--majors=skip`（既定）: UI フレームワークやフレームワーク本体の major（例: Chakra UI v2→v3、React 19 / Next の major、Prisma の major、ESLint の flat config 移行、zod 4、TypeScript のネイティブ版）は、ガーデニングの枠に収まらない独立した移行案件なので、深い調査をせずに「見送り（個別移行）」とする。記録 issue に載せ、`file-issue` で単独の issue にするかをユーザーに提案する（`--auto` では提案だけ書く）。それ以外の major は、下の判定に従う
+- `--majors=stack`: major はガーデニング PR（Step 3）に入れず、すべて Step 3b の層の候補にする。ただし、GitHub Actions のアクションのように追従修正が要らず、このリポジトリのコードに触れない major は、従来どおりガーデニング PR に入れてよい（層の上限を使わないため）。フレームワーク本体の major も対象にする。候補ごとに下の調査を行ったうえで、次のどちらかに振り分ける
+  - **層の候補**: 優先度の高い順に `--max-majors` 件まで。順序は `[SECURITY]` → ランタイム依存（`dependencies`）→ 移行規模の小さいもの。**フレームワーク本体の major は上の層に置く**。上の層が詰まっても、下の層までは先にマージできるようにするため
+  - **見送り**: 理由と再開条件を書く。主な理由は次のとおり
+    - ピア依存が未対応（例: プラグインが新しい major を peer で許していない）
+    - 上げる前に方針の判断が要る（例: 送信する API 版が変わるので、先に版を明示するかを決める）
+    - 前回の見送りの再開条件がまだ満たされていない
+    - 検証の手段が CI の死角にしか無い（deploy でしか動かない、CI が型チェックしないワークスペース）
+    - 上流のバグ待ち
+    - ほかの open PR（Renovate 以外のスタックを含む）が同じファイルを変更しており、衝突する。その PR のマージ後を再開条件にする
+    - 上限超過（翌月に回す。翌月の候補の順も書いておく）
+  - 前回までの見送り理由が「個別の移行作業として」だけのものは、`--majors=stack` では理由にならない。候補に戻して判定し直す
+  - 版は、公開から 7 日（Renovate の major の `minimumReleaseAge`）以上たった版のうち最新を採る。ピア依存で同時に上げる組（例: `@stripe/react-stripe-js` と `@stripe/stripe-js`）は 1 層にまとめ、両方が 7 日以上たっていて peer を満たす組み合わせのうち最新を採る
+  - 並べ順で差が付かないときは、影響範囲の狭いもの（バックエンドの 1 ファイルなど）を下に、目視確認が要る UI の更新を上に置く。Node.js などの実行環境の major は、フレームワーク本体と同じく上の層に置く
+  - Renovate のグループが性質の違う更新をまとめている（例: CI の Node の版と runner の OS）ときは、グループ単位でなく更新ごとに判定し、同じものを上げる別グループ（例: `.node-version` の Node）と同じ層にまとめる
+- **ほかの open PR との衝突**: 層の候補が触るファイルを、Renovate 以外の open PR（特にスタック）が変更していないかを確かめる
 
 候補が多い（目安 10 件超）ときは、ランタイム（API）/ フロントエンド / ツール・インフラのように領域で分け、読み取り専用のサブエージェントに並列で調査させる。指示には「ファイル変更・install・git 操作・GitHub への書き込みをしない」と、下記の調査項目と判定の 3 区分、返してほしい表の列を明記する。
 
@@ -119,6 +149,23 @@ description: Renovate が自動マージしない依存更新と Renovate 管轄
   - **フォーマッタ（prettier 等）を上げたときの整形差分**は、旧版でも差分が出るファイルを除いてから判断する（旧版を `npx <tool>@<旧版> --list-different` で当てる）。CI で format を検査していないリポジトリは旧版の時点で既に未整形のことが多く、全体整形の差分の大半は更新と無関係になる。更新由来の差分がわずかなら整形コミットは入れない
 - 1 件適用するごとに、影響のあるワークスペースの型チェックとテストを回す。全体の検証は Step 4 でまとめて行う
 
+### Step 3b: major の層を積む（`--majors=stack`）
+
+ガーデニングブランチの検証（Step 4）が通ってから、Step 2 で選んだ層の候補を順に積む。
+
+- 層 k のブランチ `claude/gardening-YYYYMM-major-<pkg>` を、直下の層（最初はガーデニングブランチ）から切る。`<pkg>` は `@` と `/` を `-` に置き換える（例: `firebase-admin`、`stripe-react-stripe-js`）
+- Step 3 と同じ手順で更新を適用する。**依存更新の commit と追従修正の commit を分ける**。版の記述がドキュメントにあれば、その層の中で別の commit で直す
+- 層ごとに Step 4 と同じ検証をすべて通す
+- 次のときは、その層を push せずに見送りにする（ブランチは消し、理由に失敗内容を書く）。後続の候補は、最後に成功した層の上に積む
+  - 同じ失敗に 3 回修正を試みても green にならない
+  - 通すためにテストの期待値の変更（振る舞いの変更）が必要になる
+  - 追従修正が機能仕様の判断を要する
+- 追従修正の大きさ（ファイル数）だけでは見送りにしない。1 層に 1 パッケージなので、大きな修正もその層のレビューで判断できる。ただし、無関係なリファクタリングは混ぜない
+- 実行時にしか出ない非互換で確認できなかったものは、その層の PR 本文に「未確認」として書く
+- テストの mock をライブラリの新しい形（export の形など）に合わせる変更は追従修正に入る。assert の期待値を変えて振る舞いを変えるのは、上の「期待値の変更」に当たる
+- UI を変える層で、リポジトリが PR のスクリーンショットを求めている場合、`--auto` では撮らずに、その層の PR 本文に「スクリーンショット未取得（人が撮る）」と書く
+- 上の層は下の層の変更をすべて含む。下の層を直したら、上の層すべてに下の層のブランチを merge して検証し直す（rebase・force push はしない）
+
 ### Step 4: 検証
 
 - CI の PR 用 workflow と同じコマンドをローカルで実行する（lint / test / typecheck / build:dryrun 等）。全部 green になるまで Step 3 に戻って直す
@@ -134,8 +181,13 @@ description: Renovate が自動マージしない依存更新と Renovate 管轄
   - **意図的な固定**（Step 1 の 3）と Dashboard の非推奨・設定移行の指摘
   - 検証結果（実行したコマンドと結果、実地確認した項目と未確認の項目）
   - dev / 本番への影響（デプロイが起動するパス、マイグレーションの有無、インフラ変更の有無）
-- `gh pr checks <n> --watch --interval 30` をバックグラウンドで待つ。落ちたら `fix-ci` で直す
-- **記録 issue（`Package gardening log`）にコメントする**。無ければ作る。内容は今回の PR 番号・採用数・見送り一覧（理由・再開条件）。次回の Step 0 はこれを読む
+- `--majors=stack` で層を積んだときは、下の層から順に PR を作る
+  - base は直下の層のブランチ（最下層の major の層はガーデニングブランチ）。タイトルは `:arrow_up: <pkg> を <現行> から <更新後> に上げる（ガーデニング YYYY-MM）` のように、何の major かが分かるものにする
+  - 本文に「Stack k/n: #ガーデニング → … → **本 PR** → …」の位置、採用の理由、全区間の破壊的変更と該当箇所、追従修正の内容、検証結果、未確認の項目を書く
+  - ガーデニング PR の本文にも、上に積んだ層の一覧を追記する
+  - スタックへの変換は `gh stack link <ガーデニング PR> <層 1> ... <層 n>`（`gh` の `github/gh-stack` 拡張）。クラウドセッションのように `gh` から GitHub を操作できない環境では、Web でのスタック変換をユーザーに依頼する旨を、報告と記録 issue に書く
+- `gh pr checks <n> --watch --interval 30` をバックグラウンドで待つ（層があれば全層）。落ちたら `fix-ci` で直す
+- **記録 issue（`Package gardening log`）にコメントする**。無ければ作る。内容は今回の PR 番号・採用数・見送り一覧（理由・再開条件）。`--majors=stack` では、スタックの構成（層・パッケージ・PR・CI の結果）と、前回から残っている層も書く。次回の Step 0 はこれを読む
 - 吸収した Renovate PR は閉じない。ガーデニング PR が merge commit で入れば GitHub が merged 扱いにし、squash で入っても Renovate が次の実行で自動クローズする。古い重複 PR（Step 1 の同一パッケージ重複）だけは、ガーデニング PR へのリンクをコメントしてから閉じる（`--auto` では閉じずに報告だけ）
 - `--until=pr` または `--auto` ならここで報告して終了
 
@@ -154,13 +206,13 @@ description: Renovate が自動マージしない依存更新と Renovate 管轄
 
 ### Step 8: 最終報告
 
-ガーデニング PR / 採用した更新と追従修正 / 見送った更新と理由 / 検証結果（未確認の項目を含む）/ CI と dev デプロイの結果 / リリース PR（あれば）/ 記録 issue のコメント、を 1 ブロックで報告する。
+ガーデニング PR / major の層（下から順に PR・CI の結果。`--majors=stack` のとき）/ 採用した更新と追従修正 / 見送った更新と理由 / 検証結果（未確認の項目を含む）/ CI と dev デプロイの結果 / リリース PR（あれば）/ 記録 issue のコメント、を 1 ブロックで報告する。
 
 ## `--auto` のときの追加規則
 
 Routine など、誰も見ていない状態で動かすときの規則。
 
-- **書き込んでよいのは `claude/gardening-*` ブランチ、ガーデニング PR、記録 issue のコメントだけ**。統合ブランチ・本番ブランチへのマージ、Renovate PR のクローズ、Dashboard のチェックボックス操作、`renovate.json` の変更はしない
+- **書き込んでよいのは `claude/gardening-*` ブランチ（major の層の `claude/gardening-*-major-*` を含む）、ガーデニング PR と major の層の PR、記録 issue のコメントだけ**。統合ブランチ・本番ブランチへのマージ、Renovate PR のクローズ、Dashboard のチェックボックス操作、`renovate.json` の変更はしない
 - 迷ったら見送りに倒す。見送りは失敗ではなく、理由が書いてあれば次回の人が判断できる
 - 1 件の追従修正に時間がかかりすぎる（目安: 同じ失敗に 3 回修正を試みても green にならない）ときは、その更新を revert して見送りにし、次の候補へ進む
 - 長いコマンド（全体テスト・ビルド）はバックグラウンドで実行して完了を待つ。クラウドの前景コマンドは 10 分で打ち切られる
@@ -184,6 +236,8 @@ Routine など、誰も見ていない状態で動かすときの規則。
 | 「全部まとめて上げて最後にテストすればよい」 | 落ちたときにどの更新が原因か切り分けられない。1 件ずつ commit と型チェックを挟む |
 | 「テストが落ちるのは古いテストのせいなので期待値を直す」 | 期待値の変更は振る舞いの変更。見送りにして人に判断を委ねる |
 | 「SECURITY なので何があっても今回入れる」 | 追従修正が広範なら、到達可能性を評価したうえで見送りにして issue にする方が安全なこともある。どちらにしても理由を書く |
+| 「major の層は大きな変更なので、テストの期待値も直して通す」 | 期待値の変更は振る舞いの変更。層を作らずに見送り、理由を記録 issue に書いて人に判断を委ねる |
+| 「major もガーデニング PR にまとめてしまえば早い」 | `--majors=stack` では major を必ず別の層にする。詰まった major がガーデニング PR（SECURITY 更新を含む）のマージを止めないようにするため |
 | 「見送り理由は自明なので書かなくてよい」 | 次回は別のセッション（クラウドならメモリも無い）が判断する。記録 issue に書いていない理由は失われる |
 
 ## 関連
