@@ -21,13 +21,15 @@ export const DEFAULT_LOCKFILES = [
 ]
 
 // どの理由に当たってもスキップしないパス。リポジトリごとに `never-skip` で足す。
-export const DEFAULT_NEVER_SKIP = ['.github/**', '**/migrations/**']
+export const MIGRATIONS_GLOB = '**/migrations/**'
+export const DEFAULT_NEVER_SKIP = ['.github/**', MIGRATIONS_GLOB]
 
 export const REASONS = {
   moved: '内容が同じままの移動・リネーム',
   lockfile: 'lockfile',
   generated: '生成物（設定で指定したパス）',
   whitespace: '行末の空白・改行コードだけの差分',
+  migrationMeta: 'migration ツールが生成するメタデータ（同じ PR に migration の SQL がある）',
 }
 
 /** `**` と `*` だけを解釈する最小限の glob。パス区切りは `/`。 */
@@ -97,9 +99,33 @@ export function isWhitespaceOnlyPatch(patch) {
   return flush() && sawChange
 }
 
+const MIGRATION_META_RE = /^(.*\/)?migrations\/meta\/(_journal\.json|(\d+)_snapshot\.json)$/
+
+/**
+ * migration ツール（drizzle-kit）が SQL と一緒に生成する `meta/_journal.json` と
+ * `meta/<番号>_snapshot.json` かを判定する。同じ PR で、対応する SQL が
+ * `migrations/` の直下に追加・変更されているときだけ true にする。
+ * snapshot は番号の同じ SQL を求める。SQL の無いメタデータだけの変更は、手で書き換えた
+ * 可能性があるので false にする。
+ */
+export function isMigrationMeta(file, files) {
+  if (file.status !== 'added' && file.status !== 'modified') return false
+  const m = MIGRATION_META_RE.exec(file.filename)
+  if (!m) return false
+  const dir = `${m[1] ?? ''}migrations/`
+  const number = m[3]
+  return files.some((f) => {
+    if (f.status === 'removed' || !f.filename.startsWith(dir)) return false
+    const name = f.filename.slice(dir.length)
+    if (name.includes('/') || !name.endsWith('.sql')) return false
+    return number === undefined || name.startsWith(`${number}_`)
+  })
+}
+
 /**
  * @param {object} file REST API の変更ファイル 1 件
- * @param {{lockfiles?: string[], generated?: string[], neverSkip?: string[]}} [options]
+ * @param {{lockfiles?: string[], generated?: string[], neverSkip?: string[], files?: object[]}} [options]
+ *   `files` は PR の変更ファイルの全件。migration のメタデータの判定にだけ使う
  * @returns {{path: string, skip: boolean, reason?: keyof typeof REASONS}}
  */
 export function classifyFile(file, options = {}) {
@@ -109,6 +135,12 @@ export function classifyFile(file, options = {}) {
   const path = file.filename
   const keep = { path, skip: false }
 
+  // 既定の `**/migrations/**` に当たるだけなら、生成されたメタデータは通す。
+  // リポジトリが足した never-skip に当たるものは通さない
+  if (options.files && isMigrationMeta(file, options.files)) {
+    const others = neverSkip.filter((g) => g !== MIGRATIONS_GLOB)
+    return matchesAny(path, others) ? keep : { path, skip: true, reason: 'migrationMeta' }
+  }
   if (matchesAny(path, neverSkip)) return keep
   if (file.previous_filename && matchesAny(file.previous_filename, neverSkip)) return keep
   // 削除は「テストを消した」などの重要な変更になり得るので、種類を問わず残す
@@ -124,5 +156,5 @@ export function classifyFile(file, options = {}) {
 }
 
 export function classifyFiles(files, options = {}) {
-  return files.map((f) => classifyFile(f, options))
+  return files.map((f) => classifyFile(f, { ...options, files }))
 }

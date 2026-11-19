@@ -11,7 +11,7 @@ inputs:
     description: Viewed を付ける本人の PAT（対象リポジトリの Pull requests の読み書き）
     required: true
   never-skip:
-    description: どの理由でも Viewed を付けないパスの glob（改行区切り）。既定の .github/** と **/migrations/** に足す
+    description: どの理由でも Viewed を付けないパスの glob（改行区切り）。既定の .github/** と **/migrations/** に足す。ここに書いたパスは、migration のメタデータでも Viewed を付けない
     default: ''
   generated:
     description: 生成物として Viewed を付けるパスの glob（改行区切り）

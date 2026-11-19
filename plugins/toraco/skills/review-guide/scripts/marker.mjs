@@ -38,7 +38,7 @@ export function selectPaths({ marker, prHead, files, neverSkip = DEFAULT_NEVER_S
   const rejected = []
   for (const file of files) {
     const path = file.filename
-    const mechanical = classifyFile(file, { ...options, neverSkip })
+    const mechanical = classifyFile(file, { ...options, neverSkip, files })
     if (mechanical.skip) {
       selected.push({ path, reason: mechanical.reason })
     } else if (fromGuide.has(path)) {
