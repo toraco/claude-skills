@@ -79,3 +79,21 @@ test('下準備は機械的な判定と必ず見るパスを添える', () => {
   assert.equal(r[1].neverSkip, true)
   assert.equal(r[2].mechanical, undefined)
 })
+
+test('生成された migration のメタデータは「見なくてよい」に入れられる', () => {
+  const withMigration = [
+    ...files,
+    file('db/migrations/0001_x.sql'),
+    file('db/migrations/meta/_journal.json'),
+  ]
+  const ok = {
+    ...spec,
+    must: [...spec.must, { path: 'db/migrations/0001_x.sql', note: 'テーブルの追加' }],
+    skip: [...spec.skip, { path: 'db/migrations/meta/_journal.json', note: '生成物' }],
+  }
+  assert.deepEqual(validate(ok, withMigration), [])
+  const prepared = prepare(withMigration)
+  assert.equal(prepared.at(-1).neverSkip, undefined)
+  assert.match(prepared.at(-1).mechanical, /migration/)
+  assert.equal(prepared.at(-2).neverSkip, true)
+})

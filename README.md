@@ -137,8 +137,8 @@ set -e
 
 - PAT は fine-grained で、対象リポジトリの Pull requests の Read and write だけを付ける。fine-grained PAT は org をまたげないので、org ごとに 1 つ要る
 - このリポジトリは public なので、workflow をここに置かない（Actions のログが公開され、対象のリポジトリ名が残る）
-- スクリプトは、PAT の持ち主が投稿したガイドだけを読む。ガイドを書いた後に PR が更新されていれば、一覧を使わない。`.github/**` と `**/migrations/**` には Viewed を付けない
-- スクリプトのテストは `node --test plugins/toraco/skills/review-guide/scripts/` で実行する
+- スクリプトは、PAT の持ち主が投稿したガイドだけを読む。ガイドを書いた後に PR が更新されていれば、一覧を使わない。`.github/**` と `**/migrations/**` には Viewed を付けない（migration の SQL と同じ PR で生成された `migrations/meta/` の journal と snapshot だけは付ける）
+- スクリプトのテストは `node --test 'plugins/toraco/skills/review-guide/scripts/*.test.mjs'` で実行する
 
 ## 同梱 hooks
 

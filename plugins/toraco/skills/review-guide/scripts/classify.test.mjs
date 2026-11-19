@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { classifyFile, globToRegExp, isWhitespaceOnlyPatch } from './classify.mjs'
+import { classifyFile, classifyFiles, DEFAULT_NEVER_SKIP, globToRegExp, isWhitespaceOnlyPatch } from './classify.mjs'
 
 const modified = (filename, patch) => ({ filename, status: 'modified', changes: 2, patch })
 
@@ -75,4 +75,45 @@ test('glob は ** と * を解釈する', () => {
   assert.equal(globToRegExp('*.snap').test('a/b.snap'), false)
   assert.equal(globToRegExp('**/*.snap').test('a/b.snap'), true)
   assert.equal(globToRegExp('a.b').test('axb'), false)
+})
+
+const added = (filename) => ({ filename, status: 'added', changes: 1, patch: '@@ -0,0 +1 @@\n+a' })
+
+test('migration の SQL と一緒に生成されたメタデータはスキップする', () => {
+  const files = [
+    added('api/db/migrations/0001_seller.sql'),
+    added('api/db/migrations/meta/0001_snapshot.json'),
+    modified('api/db/migrations/meta/_journal.json', '@@\n+a'),
+  ]
+  assert.deepEqual(
+    classifyFiles(files).map((r) => r.reason),
+    [undefined, 'migrationMeta', 'migrationMeta'],
+  )
+})
+
+test('対応する SQL が無いメタデータはスキップしない', () => {
+  const journal = modified('api/db/migrations/meta/_journal.json', '@@\n+a')
+  const snapshot = added('api/db/migrations/meta/0002_snapshot.json')
+  // SQL が無い、番号が違う、SQL を消した、別のディレクトリにある
+  assert.equal(classifyFiles([journal, snapshot])[1].skip, false)
+  assert.equal(classifyFiles([journal])[0].skip, false)
+  assert.equal(classifyFiles([added('api/db/migrations/0001_seller.sql'), snapshot])[1].skip, false)
+  assert.equal(
+    classifyFiles([{ ...added('api/db/migrations/0002_x.sql'), status: 'removed' }, journal])[1].skip,
+    false,
+  )
+  assert.equal(classifyFiles([added('web/db/migrations/0002_x.sql'), journal])[1].skip, false)
+})
+
+test('メタデータ自体の削除や、メタデータ以外の migration のファイルはスキップしない', () => {
+  const sql = added('api/db/migrations/0001_seller.sql')
+  const removed = { ...added('api/db/migrations/meta/0001_snapshot.json'), status: 'removed' }
+  assert.equal(classifyFiles([sql, removed])[1].skip, false)
+  assert.equal(classifyFiles([sql, added('api/db/migrations/meta/notes.json')])[1].skip, false)
+})
+
+test('リポジトリが足した never-skip に当たるメタデータはスキップしない', () => {
+  const files = [added('api/db/migrations/0001_seller.sql'), added('api/db/migrations/meta/0001_snapshot.json')]
+  const neverSkip = [...DEFAULT_NEVER_SKIP, 'api/db/**']
+  assert.equal(classifyFile(files[1], { files, neverSkip }).skip, false)
 })

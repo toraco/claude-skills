@@ -43,7 +43,7 @@ export function shortNames(paths) {
 
 export function prepare(files, { neverSkip = DEFAULT_NEVER_SKIP } = {}) {
   return files.map((f) => {
-    const mechanical = classifyFile(f, { neverSkip })
+    const mechanical = classifyFile(f, { neverSkip, files })
     return {
       path: f.filename,
       status: f.status,
@@ -51,7 +51,7 @@ export function prepare(files, { neverSkip = DEFAULT_NEVER_SKIP } = {}) {
       deletions: f.deletions,
       ...(f.previous_filename ? { previous: f.previous_filename } : {}),
       ...(mechanical.skip ? { mechanical: REASONS[mechanical.reason] } : {}),
-      ...(matchesAny(f.filename, neverSkip) ? { neverSkip: true } : {}),
+      ...(!mechanical.skip && matchesAny(f.filename, neverSkip) ? { neverSkip: true } : {}),
     }
   })
 }
@@ -78,7 +78,9 @@ export function validate(spec, files, { neverSkip = DEFAULT_NEVER_SKIP } = {}) {
       if (needsNote && !entry.note?.trim()) errors.push(`${section}: 説明（note）がありません: ${entry.path}`)
       if (section === 'skip') {
         const f = known.get(entry.path)
-        const blocked = matchesAny(entry.path, neverSkip) || (f?.previous_filename && matchesAny(f.previous_filename, neverSkip))
+        const blocked =
+          (matchesAny(entry.path, neverSkip) || (f?.previous_filename && matchesAny(f.previous_filename, neverSkip))) &&
+          !(f && classifyFile(f, { neverSkip, files }).skip)
         if (blocked) errors.push(`skip: 必ず見るパスなので「見なくてよい」に入れられません: ${entry.path}`)
       }
     }
