@@ -4,7 +4,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
-/* 1 列の読み物。上に固定の進捗バー、地図 → 確かめること → 要件 → 影響 → 動作確認 → ファイルの順に下へ読む */
+/* 1 列の読み物。上に固定の進捗バー、関係図 → 確かめること → 要件 → 影響 → 動作確認 → ファイルの順に下へ読む */
 :root {
   --bg: #f4f6f8;
   --surface: #ffffff;
@@ -95,7 +95,7 @@ h2 small { font-size: 12.5px; font-weight: 400; color: var(--muted); }
 .s-docs { background: var(--c-docs); } .s-skip { background: var(--c-skip); }
 .s-outside { background: transparent; border: 1.5px dashed var(--edge); }
 
-/* 変更の地図 */
+/* ファイルの関係図 */
 .map { position: relative; display: grid; gap: 30px; padding: 16px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .map svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .map svg path.edge { fill: none; stroke: var(--edge); stroke-width: 1.4; }
@@ -274,7 +274,7 @@ footer.wrap { padding-block: 0 40px; font-size: 12.5px; color: var(--muted); dis
     if (saving) { pending = true; return }
     saving = true
     try { await remote.set({ checks, updatedAt: Date.now() }); saveLabel('アカウントに保存') }
-    catch { saveLabel('保存できませんでした（この端末には保存）') }
+    catch { saveLabel('アカウントに保存できませんでした。この端末には保存しています') }
     finally { saving = false; if (pending) { pending = false; pushRemote() } }
   }
   function setCheck(id, state) {
@@ -345,7 +345,7 @@ footer.wrap { padding-block: 0 40px; font-size: 12.5px; color: var(--muted); dis
     ),
   )
 
-  // ---- 変更の地図 ----
+  // ---- ファイルの関係図 ----
   if (DATA.map && DATA.map.layers.length) {
     const mapEl = h('div', { class: 'map' })
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -425,7 +425,7 @@ footer.wrap { padding-block: 0 40px; font-size: 12.5px; color: var(--muted); dis
       }
       g.innerHTML = parts.join('')
     }
-    main.append(section('map', '変更の地図', '矢印は呼び出し・依存の向き。タップで詳細', mapEl, detail,
+    main.append(section('map', 'ファイルの関係図', '矢印は使う側から使われる側へ。ファイルをタップすると説明が出ます', mapEl, detail,
       h('div', { class: 'legend' }, ORDER.filter((s) => DATA.counts[s]).map((s) => h('span', {}, h('span', { class: `dot s-${s}` }), SECTION[s])),
         DATA.outside.length ? h('span', {}, h('span', { class: 'dot s-outside' }), '差分の外') : null)))
     const redraw = () => requestAnimationFrame(drawEdges)

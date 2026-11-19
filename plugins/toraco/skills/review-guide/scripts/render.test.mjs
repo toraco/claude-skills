@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { parseMarker } from './marker.mjs'
-import { buildPageData, excerpt, GUIDE_MARKER, parsePatch, prepare, renderComment, renderPage, shortNames, validate } from './render.mjs'
+import { buildPageData, excerpt, exportProse, GUIDE_MARKER, importProse, parsePatch, prepare, renderComment, renderPage, shortNames, validate } from './render.mjs'
 
 const file = (filename, extra = {}) => ({ filename, status: 'modified', additions: 3, deletions: 1, changes: 4, patch: '@@\n-a\n+b', ...extra })
 const files = [
@@ -78,7 +78,7 @@ test('カードの種類・前後の対・引用する行の範囲を検査す�
   assert.match(errors[4], /変更ファイルに無いパス/)
 })
 
-test('地図・差分の外・要件の誤りを検出する', () => {
+test('関係図・差分の外・要件の誤りを検出する', () => {
   const bad = {
     ...spec,
     requirements: [{ text: 'r', status: 'done' }],
@@ -123,14 +123,14 @@ test('ページが無いときのコメントは、確かめることを差分�
   assert.match(body, /\*\*1\. 認可の対象が変わる\*\*/)
   assert.match(body, /- これまで: 全体\n- これから: ホテルごと/)
   assert.match(body, /\[`usecase\/index\.ts` 差分\]\(https:\/\/github\.com\/o\/r\/pull\/12\/files#diff-[0-9a-f]{64}R?\d*\)\n\n```diff\n-a\n\+b\n```/)
-  assert.doesNotMatch(body, /レビューページを開く/)
+  assert.doesNotMatch(body, /レビューページ/)
   assert.deepEqual(parseMarker(body), { head: 'abcdef0', paths: ['src/routes/admin/user/handlers.ts'] })
 })
 
 test('ページがあるときのコメントは、上位 3 件とページへのリンクにする', () => {
   const many = { ...spec, cards: Array.from({ length: 5 }, (_, i) => ({ kind: 'decision', title: `決めたこと ${i + 1}`, body: 'b' })) }
   const body = renderComment(many, files, pr, { repo: 'o/r', pageUrl: PAGE })
-  assert.match(body, new RegExp(`\\[📱 レビューページを開く\\]\\(${PAGE}\\)`))
+  assert.match(body, new RegExp(`\\[レビューページ\\]\\(${PAGE}\\)に、ファイルの関係図`))
   assert.match(body, /### 確かめること（上位 3 件 \/ 全 5 件）/)
   assert.match(body, /ほかに 2 件: 決めたこと 4 \/ 決めたこと 5/)
   assert.equal(parseMarker(body).page, PAGE)
@@ -198,4 +198,27 @@ test('生成された migration のメタデータは「見なくてよい」に
   assert.equal(prepared.at(-1).neverSkip, undefined)
   assert.match(prepared.at(-1).mechanical, /migration/)
   assert.equal(prepared.at(-2).neverSkip, true)
+})
+
+test('地の文は目印つきで書き出し、推敲した文を同じ欄に書き戻せる', () => {
+  const md = exportProse(spec)
+  assert.match(md, /^<!-- review-guide:prose summary -->\n会員の認可をホテル単位にする\n/)
+  assert.match(md, /<!-- review-guide:prose cards\.0\.before -->\n全体\n/)
+  assert.doesNotMatch(md, /tests\.0\.note/) // note の無い欄は出さない
+  const polished = md.replace('会員の認可をホテル単位にする', '会員の認可を、ホテルごとに判定します。\n\n2 行目')
+  const next = importProse(spec, polished)
+  assert.equal(next.summary, '会員の認可を、ホテルごとに判定します。\n\n2 行目')
+  assert.equal(next.cards[0].title, spec.cards[0].title)
+  assert.equal(spec.summary, '会員の認可をホテル単位にする') // 元の spec は変えない
+  assert.deepEqual(importProse(spec, md), spec)
+})
+
+test('目印が消えた・増えた・入れ替わった・欄が空になったときは書き戻さない', () => {
+  const md = exportProse(spec)
+  assert.throws(() => importProse(spec, md.replace('<!-- review-guide:prose cards.0.body -->\n', '')), /足りない: cards\.0\.body/)
+  assert.throws(() => importProse(spec, `${md}\n<!-- review-guide:prose cards.9.title -->\nx\n`), /余分: cards\.9\.title/)
+  const blocks = md.split('\n\n')
+  assert.throws(() => importProse(spec, [blocks[1], blocks[0], ...blocks.slice(2)].join('\n\n')), /順序が違う/)
+  assert.throws(() => importProse(spec, md.replace('\n全体\n', '\n\n')), /cards\.0\.before が空/)
+  assert.throws(() => importProse(spec, `前置き\n${md}`), /最初の目印より前/)
 })

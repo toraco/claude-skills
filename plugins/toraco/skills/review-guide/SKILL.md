@@ -1,11 +1,11 @@
 ---
 name: review-guide
-description: PR を自分でレビューするための材料（確かめること・要件とテストの対応・変更の地図・差分の外の影響・動作確認の手順）を、スマホでも読めるレビューページ（Artifact）と PR のコメントにまとめ、見なくてよいファイルに Viewed を付ける。Stacked PRs はまとめて処理できる。自動起動はせず、ユーザーが明示的に指示したときだけ使う。
+description: PR を自分でレビューするための材料（確かめること・要件とテストの対応・ファイルの関係図・差分の外の影響・動作確認の手順）を、スマホでも読めるレビューページ（Artifact）と PR のコメントにまとめ、見なくてよいファイルに Viewed を付ける。Stacked PRs はまとめて処理できる。自動起動はせず、ユーザーが明示的に指示したときだけ使う。
 ---
 
 # Review guide: $ARGUMENTS
 
-**使い方**: `/review-guide [pr-number...] [--stack] [--no-page] [--no-viewed] [--dry-run] [--runner <owner/repo>]`
+**使い方**: `/review-guide [pr-number...] [--stack] [--no-page] [--no-yomiyasu] [--no-viewed] [--dry-run] [--runner <owner/repo>]`
 
 例:
 
@@ -21,7 +21,7 @@ PR の作者が **自分の PR を、Files changed と見比べずに、スマ�
 「どのファイルを読むか」の一覧はもう要らない（Viewed の付かなかったファイルは、どうせ全部開く）。代わりに、
 差分が正しいと自分で言えるかを確かめる材料を、該当する差分の抜粋と一緒に並べる。
 
-1. **レビューページ**（Artifact、本人だけが見られる）: 変更の地図、確かめること（差分の抜粋つき）、要件とテストの対応、
+1. **レビューページ**（Artifact、本人だけが見られる）: ファイルの関係図、確かめること（差分の抜粋つき）、要件とテストの対応、
    差分の外で影響を受ける箇所、動作確認の手順、ファイルの一覧。確かめることには「確認した / 要修正」の印を付けられ、
    印はアカウントに保存されるので、PC とスマホで続きから読める
 2. **PR のコメント**: ページへのリンクと、上位 3 件の確かめること（差分の抜粋つき）。ページを開かなくても最低限の判断ができる
@@ -37,13 +37,14 @@ PR の作者が **自分の PR を、Files changed と見比べずに、スマ�
 | `pr-number...` | current branch の PR | 対象の PR。複数並べてよい |
 | `--stack` | なし | 対象の PR が Stacked PRs に属するとき、stack 内の open な PR をすべて対象にする |
 | `--no-page` | なし | レビューページを作らず、確かめること・差分の外・動作確認をすべてコメントに書く。`Artifact` ツールが無い環境でも、この形になる |
+| `--no-yomiyasu` | なし | ページとコメントの地の文を yomiyasu で推敲しない（Step 4） |
 | `--no-viewed` | なし | Viewed を付けない |
 | `--dry-run` | なし | ページとコメントを作業用のディレクトリに作るだけで、公開・投稿・Viewed をしない |
 | `--runner <owner/repo>` | `toraco/dotclaude` | Viewed を付ける workflow（`auto-viewed.yml`）を置いたリポジトリ。クラウドセッションで使う |
 
 ## 仕分けの基準
 
-仕分けは、Viewed を付けるファイルを決めるのと、ページのファイル一覧・変更の地図の色分けに使う。コメントには「見なくてよい」の一覧だけが出る。
+仕分けは、Viewed を付けるファイルを決めるのと、ページのファイル一覧・ファイルの関係図の色分けに使う。コメントには「見なくてよい」の一覧だけが出る。
 
 区分は、ファイルの種類ではなく **レビューする人が何をすればよいか** で決める。迷ったら、読む側の区分（上の行）に入れる。
 
@@ -113,7 +114,7 @@ PR が満たすべきこと（リンクされた issue の受け入れ条件、�
 - `partial` / `missing` には、何が足りないかを `note` に書く。ページとコメントでは先頭に出る
 - 要件に挙げていないのに変わっている振る舞いは、`cards` の `unlisted` に入れる
 
-### 変更の地図（`map`）
+### ファイルの関係図（`map`）
 
 変更したファイルを層ごと（例: 入口 → usecase → repository → DB、テスト）に並べ、呼び出し・依存の向きを矢印でつなぐ図。
 ページの先頭近くに描かれ、ファイルの区分で色が付く。
@@ -148,7 +149,7 @@ PR が満たすべきこと（リンクされた issue の受け入れ条件、�
    `gh api --paginate "repos/{owner}/{repo}/pulls?state=open&per_page=100" --jq '.[] | {number, head: .head.ref, base: .base.ref}'`。
    どの PR を指定しても、同じ stack の全レイヤーが対象になる。1 本も見つからなければ、指定された PR だけを対象にする。
    集めた PR の一覧（下から順）を、Step 1 に進む前に表示する。
-4. 対象リポジトリの CLAUDE.md / AGENTS.md を読み、次を控える: PR コメントの言語と推敲ルール（例: 「/yomiyasu で推敲してから投稿する」）、必ずレビューすると書かれたパス、動作確認の方法（dev サーバーの起動、seed など）。
+4. 対象リポジトリの CLAUDE.md / AGENTS.md を読み、次を控える: PR コメントの言語と推敲ルール（Step 4 で yomiyasu を使えないときに使う）、必ずレビューすると書かれたパス、動作確認の方法（dev サーバーの起動、seed など）。
 5. 作業用のディレクトリを `.git/review-guide/<pr>/` に作る（commit されない）。
 6. ページを作るかを決める。`--no-page` が無く、`Artifact` ツールが使えるなら作る。使えなければ `--no-page` と同じに扱い、Step 7 でその旨を報告する。
 
@@ -249,7 +250,7 @@ subagent に渡すもの:
 ```
 
 必須は `summary` / `cards` / 5 つの区分。`requirements` / `map` / `outside` / `checks` は、材料が無ければ省いてよい。
-`must` / `skim` / `skip` の `note` は必須（ページのファイル一覧と、地図をタップしたときの説明に出る）。
+`must` / `skim` / `skip` の `note` は必須（ページのファイル一覧と、関係図でファイルをタップしたときの説明に出る）。
 
 ### Step 3: 親が確かめる
 
@@ -262,10 +263,35 @@ subagent が返したら、親が `spec.json` を読み、次を確かめる。�
 
 `--stack` で PR が複数あるときは、下のレイヤーから順に確かめる。
 
-### Step 4: 文面を整える
+### Step 4: 地の文を推敲する
 
-Step 0-4 で推敲ルールがあれば、`spec.json` の地の文（`summary`、`cards` の `title` / `body` / `before` / `after` / `alternatives`、
-`requirements` の `text` / `note`、各 `note`）をそれに従って直す。コード・パス・テスト名・行番号は変えない。直したら `check` をやり直す。
+ページとコメントに載る地の文を、`yomiyasu` で推敲する。`--no-yomiyasu` があるとき、または `yomiyasu:yomiyasu` skill が
+このセッションに無いときは、yomiyasu を使わない。その場合、Step 0-4 で推敲ルールを控えていれば親がそれに従って直し、
+ルールも無ければ飛ばす。どちらの場合も、コード・パス・テスト名・行番号は変えない。
+
+1. 地の文を書き出す。概要、カード、要件、関係図の層の名前と矢印のラベル、差分の外、動作確認、各ファイルの説明が、
+   欄ごとに `<!-- review-guide:prose <欄の名前> -->` の目印で区切られて出る:
+   ```bash
+   node "${CLAUDE_SKILL_DIR}/scripts/render.mjs" prose-export "$W/spec.json" > "$W/prose.md"
+   ```
+2. yomiyasu は検査の記録をリポジトリの最上位の `.yomiyasu/` に残す。commit されないよう、呼ぶ前に除外しておく:
+   `grep -qx '.yomiyasu/' .git/info/exclude 2>/dev/null || echo '.yomiyasu/' >> .git/info/exclude`
+3. `Skill` ツールで `yomiyasu:yomiyasu` を呼ぶ。yomiyasu は名前が点で始まるフォルダ（`.git/`）のファイルを読まないので、
+   ファイルの名前ではなく、次の指示と `prose.md` の全文を `args` に入れて渡す。PR が複数あれば、PR ごとに 1 回ずつ呼ぶ:
+   - 種類は `pr`、読み手は `expert`、立場は説明。セルフレビューの材料で、読むのは PR の作者
+   - `<!-- review-guide:prose ... -->` の行は書き換えず、消さず、順序も変えない。目印と目印の間の文だけを推敲する
+   - 文を別の欄へ移したり、2 つの欄を 1 つにまとめたりしない
+   - バッククォートで囲んだ部分とコードブロック、ファイルのパス、テスト名、行番号は変えない
+   - 本文は書き直した本文として返す。ファイルには保存しない
+4. 返ってきた「書き直した本文」をそのまま `$W/prose.final.md` に保存し、spec に書き戻して検査する:
+   ```bash
+   node "${CLAUDE_SKILL_DIR}/scripts/render.mjs" prose-import "$W/spec.json" "$W/prose.final.md" > "$W/spec.polished.json"
+   node "${CLAUDE_SKILL_DIR}/scripts/render.mjs" check "$W/spec.polished.json" "$W/files.json" "$W/pr.json"
+   mv "$W/spec.polished.json" "$W/spec.json"
+   ```
+   書き戻しか検査が失敗したら（目印が崩れた、欄が空になった、など）、yomiyasu を呼び直さず、推敲する前の `spec.json` で先へ進み、
+   失敗したことを Step 7 で報告する。
+5. yomiyasu の「書き手に確かめたい点」は、PR の作者が答えることなので、Step 7 のレポートに載せる。
 
 ### Step 5: ページを公開し、コメントを置く
 
@@ -330,6 +356,7 @@ PR ごとに次を 1 つの表にまとめる。
 
 - レビューページの URL（作らなかった場合はその理由）、コメントの URL、Viewed を付けた件数（付けなかった場合はその理由）
 - `cards` の `title`（種類つき）と、`requirements` の ⚠️ の件数
+- 推敲の結果（yomiyasu で推敲した / 推敲ルールで直した / しなかった、とその理由）と、yomiyasu の「書き手に確かめたい点」
 - Step 3 で親が区分やカードを動かしたものがあれば、その内容と理由
 
 続けて、セルフレビューの進め方を 1 行で案内する: レビューページを上から読み、確かめることに「確認した / 要修正」の印を付ける。

@@ -7,6 +7,10 @@
 //     仕分け（spec）を検査する。問題が無ければ何も出さずに終わる
 //   node render.mjs page <spec.json> <files.json> <pr.json>
 //     レビューページ（Artifact に公開する HTML）を標準出力に出す
+//   node render.mjs prose-export <spec.json>
+//     spec の地の文（概要・カード・要件・注記など）を、推敲用の Markdown に書き出す
+//   node render.mjs prose-import <spec.json> <prose.md>
+//     推敲した Markdown を spec に書き戻し、新しい spec を標準出力に出す
 //   node render.mjs comment <spec.json> <files.json> <pr.json> [<page-url>]
 //     PR に投稿するコメントの本文を標準出力に出す。page-url を渡すと、ページへのリンクを入れて
 //     コメントを要約にする。渡さなければ、確かめることをすべてコメントに入れる
@@ -220,7 +224,7 @@ export function validate(spec, files, { neverSkip = DEFAULT_NEVER_SKIP } = {}) {
     if (o?.from !== undefined && !known.has(o.from)) errors.push(`outside[${i}]: from は PR の変更ファイルです: ${o.from}`)
   }
 
-  // 変更の地図
+  // ファイルの関係図
   if (spec.map !== undefined) {
     const nodes = new Set()
     const outside = new Set((spec.outside ?? []).map((o) => o?.path))
@@ -233,7 +237,7 @@ export function validate(spec, files, { neverSkip = DEFAULT_NEVER_SKIP } = {}) {
       }
     }
     for (const [i, e] of (spec.map.edges ?? []).entries()) {
-      if (!nodes.has(e?.from) || !nodes.has(e?.to)) errors.push(`map.edges[${i}]: from と to は地図の層に置いたパスです`)
+      if (!nodes.has(e?.from) || !nodes.has(e?.to)) errors.push(`map.edges[${i}]: from と to は関係図の層（map.layers）に置いたパスです`)
     }
   }
 
@@ -347,7 +351,7 @@ export function renderComment(spec, files, pr, { repo, pageUrl, links = true } =
   const out = [GUIDE_MARKER, '## レビューガイド', '', `head \`${head}\` の ${files.length} ファイル。${data.summary}`, '']
   if (pageUrl) {
     out.push(
-      `**[📱 レビューページを開く](${pageUrl})**: 変更の地図、確かめること ${data.cards.length} 件、要件とテストの対応、動作確認の手順を 1 ページにまとめています。確認した項目には印を付けられます。`,
+      `[レビューページ](${pageUrl})に、ファイルの関係図、確かめること ${data.cards.length} 件、要件とテストの対応、動作確認の手順をまとめています。確認した項目には印を付けられます。`,
       '',
     )
   }
@@ -392,6 +396,60 @@ export function renderComment(spec, files, pr, { repo, pageUrl, links = true } =
   return `${out.join('\n')}\n`
 }
 
+/** 推敲の対象になる地の文の場所。[key, 値の取り出し, 値の書き込み] の配列を返す。 */
+export function proseFields(spec) {
+  const fields = []
+  const add = (key, obj, prop) => {
+    if (isNonEmptyString(obj?.[prop])) fields.push([key, obj, prop])
+  }
+  add('summary', spec, 'summary')
+  for (const [i, c] of (spec.cards ?? []).entries()) for (const p of ['title', 'body', 'before', 'after', 'alternatives']) add(`cards.${i}.${p}`, c, p)
+  for (const [i, r] of (spec.requirements ?? []).entries()) for (const p of ['text', 'note']) add(`requirements.${i}.${p}`, r, p)
+  for (const [i, l] of (spec.map?.layers ?? []).entries()) add(`map.layers.${i}.name`, l, 'name')
+  for (const [i, e] of (spec.map?.edges ?? []).entries()) add(`map.edges.${i}.label`, e, 'label')
+  for (const [i, o] of (spec.outside ?? []).entries()) add(`outside.${i}.note`, o, 'note')
+  for (const [i, c] of (spec.checks ?? []).entries()) for (const p of ['title', 'steps']) add(`checks.${i}.${p}`, c, p)
+  for (const section of SECTIONS) for (const [i, e] of (spec[section] ?? []).entries()) add(`${section}.${i}.note`, e, 'note')
+  add('testsNote', spec, 'testsNote')
+  add('skipNote', spec, 'skipNote')
+  return fields
+}
+
+const PROSE_MARK = (key) => `<!-- review-guide:prose ${key} -->`
+const PROSE_RE = /^<!-- review-guide:prose ([\w.]+) -->$/
+
+/** 地の文を、欄ごとに目印のコメントで区切った Markdown にする。 */
+export function exportProse(spec) {
+  return `${proseFields(spec).map(([key, obj, prop]) => `${PROSE_MARK(key)}\n${obj[prop].trim()}\n`).join('\n')}`
+}
+
+/** 推敲した Markdown を spec に書き戻す。目印の過不足・順序の入れ替わりは誤りにする。 */
+export function importProse(spec, markdown) {
+  const next = structuredClone(spec)
+  const fields = proseFields(next)
+  const parts = []
+  for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
+    const m = PROSE_RE.exec(line.trim())
+    if (m) parts.push({ key: m[1], lines: [] })
+    else if (parts.length) parts.at(-1).lines.push(line)
+    else if (line.trim()) throw new Error('最初の目印より前に文があります。目印のコメント（<!-- review-guide:prose ... -->）を消さないでください')
+  }
+  const expected = fields.map(([key]) => key)
+  const got = parts.map((p) => p.key)
+  if (expected.join('\n') !== got.join('\n')) {
+    const missing = expected.filter((k) => !got.includes(k))
+    const extra = got.filter((k) => !expected.includes(k))
+    throw new Error(`目印が spec と合いません（足りない: ${missing.join(', ') || 'なし'} / 余分: ${extra.join(', ') || 'なし'}${!missing.length && !extra.length ? ' / 順序が違う' : ''}）`)
+  }
+  parts.forEach((part, i) => {
+    const text = part.lines.join('\n').trim()
+    if (!text) throw new Error(`${part.key} が空になりました`)
+    const [, obj, prop] = fields[i]
+    obj[prop] = text
+  })
+  return next
+}
+
 const read = (p) => JSON.parse(readFileSync(p, 'utf8'))
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -412,11 +470,20 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   } else if (command === 'page' && args.length === 3) {
     const { spec, files, pr, repo } = load()
     process.stdout.write(renderPage(buildPageData(spec, files, pr, { repo })))
+  } else if (command === 'prose-export' && args.length === 1) {
+    process.stdout.write(exportProse(read(args[0])))
+  } else if (command === 'prose-import' && args.length === 2) {
+    try {
+      process.stdout.write(`${JSON.stringify(importProse(read(args[0]), readFileSync(args[1], 'utf8')), null, 2)}\n`)
+    } catch (e) {
+      console.error(e.message)
+      process.exit(1)
+    }
   } else if (command === 'comment' && (args.length === 3 || args.length === 4)) {
     const { spec, files, pr, repo } = load()
     process.stdout.write(renderComment(spec, files, pr, { repo, pageUrl: args[3], links: process.env.NO_LINKS !== 'true' }))
   } else {
-    console.error('usage: render.mjs prepare <files.json> | check|page <spec.json> <files.json> <pr.json> | comment <spec.json> <files.json> <pr.json> [<page-url>]')
+    console.error('usage: render.mjs prepare <files.json> | check|page <spec.json> <files.json> <pr.json> | prose-export <spec.json> | prose-import <spec.json> <prose.md> | comment <spec.json> <files.json> <pr.json> [<page-url>]')
     process.exit(2)
   }
 }
