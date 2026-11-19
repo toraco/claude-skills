@@ -10,6 +10,12 @@ test('一覧はコメント本文に埋め込んで取り出せる', () => {
   assert.deepEqual(parseMarker(body), { head: '1486b8c', paths: ['a.ts', 'b c/d.ts'] })
 })
 
+test('レビューページの URL も一緒に埋め込める。claude.ai の artifact でない URL は捨てる', () => {
+  const page = 'https://claude.ai/code/artifact/0b5e7c1a-2f3d-4e5f-8a9b-1c2d3e4f5a6b'
+  assert.deepEqual(parseMarker(buildMarker({ head: '1486b8c', paths: [], page })), { head: '1486b8c', paths: [], page })
+  assert.deepEqual(parseMarker(buildMarker({ head: '1486b8c', paths: [], page: 'https://evil.example/x' })), { head: '1486b8c', paths: [] })
+})
+
 test('一覧が無い・壊れているコメントは null', () => {
   assert.equal(parseMarker('ただのコメント'), null)
   assert.equal(parseMarker('<!-- review-guide:skip {oops} -->'), null)

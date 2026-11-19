@@ -28,7 +28,7 @@ claude-skills/
 | `make-plan` / `grilling` | 計画立案・壁打ち |
 | `file-issue` | issue 起票。実装タスクが複数の PR に分かれるなら、指示がなくても親 issue と sub-issues（1 issue 1 PR）に分けて起票し、`stack-issues` に渡せる形にする |
 | `stack-issues` | 親 issue の sub-issues を一括計画（確認は最初に 1 回）→ 実装 → revise → 1 issue 1 PR の Stacked PRs 作成 → auto-fix-review |
-| `review-guide` | 人がレビューする前の下準備。PR の変更ファイルを必読・流し読み・見なくてよいに仕分けたガイドを PR にコメントし、見なくてよいファイルに Viewed を付ける。`--stack` で Stacked PRs をまとめて処理する（Viewed の仕組みは下の「review-guide の Viewed」を参照） |
+| `review-guide` | セルフレビューの下準備。確かめること（差分の抜粋つき）・要件とテストの対応・ファイルの関係図・差分の外の影響・動作確認の手順を、スマホでも読めるレビューページ（Artifact）と PR のコメントにまとめ、見なくてよいファイルに Viewed を付ける。`--stack` で Stacked PRs をまとめて処理する（Viewed の仕組みは下の「review-guide の Viewed」を参照） |
 | `land` | レビュー済み PR のマージ → マージ後 CI（デプロイ）監視 → 動作確認 → 関連 issue のクローズ |
 | `release` / `fix-ci` | リリース・CI 修復 |
 | `garden-deps` | 依存パッケージのガーデニング（Renovate の手動分・管轄外の棚卸しと一括更新）。`--majors=stack` で、ガーデニング PR の上に major を 1 パッケージ 1 PR の Stacked PRs として積む |

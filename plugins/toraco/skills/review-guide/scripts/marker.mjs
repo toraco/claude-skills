@@ -5,9 +5,11 @@ import { classifyFile, DEFAULT_NEVER_SKIP, matchesAny } from './classify.mjs'
 
 const MARKER_RE = /<!--\s*review-guide:skip\s+([\s\S]*?)\s*-->/
 
-/** ガイドのコメントに埋め込む機械可読の一覧を作る。 */
-export function buildMarker({ head, paths }) {
-  return `<!-- review-guide:skip ${JSON.stringify({ head, paths })} -->`
+const PAGE_RE = /^https:\/\/claude\.ai\/(code\/)?artifact\/[\w-]+$/
+
+/** ガイドのコメントに埋め込む機械可読の一覧を作る。page はレビューページの URL（再実行で同じページを更新するため）。 */
+export function buildMarker({ head, paths, page }) {
+  return `<!-- review-guide:skip ${JSON.stringify({ head, paths, ...(page ? { page } : {}) })} -->`
 }
 
 /** コメント本文から一覧を取り出す。形が合わなければ null。 */
@@ -18,7 +20,7 @@ export function parseMarker(body) {
     const data = JSON.parse(m[1])
     if (typeof data.head !== 'string' || !/^[0-9a-f]{7,40}$/.test(data.head)) return null
     if (!Array.isArray(data.paths) || !data.paths.every((p) => typeof p === 'string')) return null
-    return { head: data.head, paths: data.paths }
+    return { head: data.head, paths: data.paths, ...(typeof data.page === 'string' && PAGE_RE.test(data.page) ? { page: data.page } : {}) }
   } catch {
     return null
   }

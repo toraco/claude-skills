@@ -1,0 +1,566 @@
+<title>__PAGE_TITLE__</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* 1 列の読み物。上に固定の進捗バー、関係図 → 確かめること → 要件 → 影響 → 動作確認 → ファイルの順に下へ読む */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --sunken: #eef1f4;
+  --fg: #1a1f26;
+  --muted: #5a6472;
+  --line: #d9dee4;
+  --accent: #1f5ad1;
+  --accent-soft: #e6eefc;
+  --add-bg: #e6f5ea; --add-fg: #176b30; --add-mark: #2da44e;
+  --del-bg: #fcebeb; --del-fg: #a92a2a; --del-mark: #d1393b;
+  --hunk-bg: #eef3fb; --hunk-fg: #4b6a9b;
+  --ok: #1d7a3b; --ok-soft: #e3f3e8;
+  --warn: #9a5400; --warn-soft: #fbefdc;
+  --c-must: #1f5ad1; --c-skim: #5b8fe6; --c-tests: #7b5cc4; --c-docs: #a07a00; --c-skip: #98a2ae;
+  --edge: #8c96a3; --edge-hot: #1f5ad1;
+  --font-body: "IBM Plex Sans JP", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1318; --surface: #171c23; --sunken: #1e242c; --fg: #e3e8ee; --muted: #9aa5b3; --line: #2c343e;
+    --accent: #7aa7ff; --accent-soft: #1b2a45;
+    --add-bg: #12291b; --add-fg: #8fdaa5; --add-mark: #3fb862;
+    --del-bg: #331718; --del-fg: #f2a3a3; --del-mark: #e5534b;
+    --hunk-bg: #18243a; --hunk-fg: #8fb0e3;
+    --ok: #6fd08f; --ok-soft: #15301f; --warn: #f0b45c; --warn-soft: #3a2a12;
+    --c-must: #7aa7ff; --c-skim: #5b86c9; --c-tests: #a891e6; --c-docs: #d6b23e; --c-skip: #66717e;
+    --edge: #5f6b79; --edge-hot: #7aa7ff;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1318; --surface: #171c23; --sunken: #1e242c; --fg: #e3e8ee; --muted: #9aa5b3; --line: #2c343e;
+  --accent: #7aa7ff; --accent-soft: #1b2a45;
+  --add-bg: #12291b; --add-fg: #8fdaa5; --add-mark: #3fb862;
+  --del-bg: #331718; --del-fg: #f2a3a3; --del-mark: #e5534b;
+  --hunk-bg: #18243a; --hunk-fg: #8fb0e3;
+  --ok: #6fd08f; --ok-soft: #15301f; --warn: #f0b45c; --warn-soft: #3a2a12;
+  --c-must: #7aa7ff; --c-skim: #5b86c9; --c-tests: #a891e6; --c-docs: #d6b23e; --c-skip: #66717e;
+  --edge: #5f6b79; --edge-hot: #7aa7ff;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.7 var(--font-body); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--surface); }
+a { color: var(--accent); text-underline-offset: 2px; }
+code, .mono, pre, .diff, .node { font-variant-ligatures: none; }
+code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+:not(pre) > code { background: var(--sunken); padding: 0.1em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wrap { max-width: 760px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+
+/* 固定ヘッダー */
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--surface); border-bottom: 1px solid var(--line); }
+.top .wrap { display: grid; gap: 6px; padding-block: 10px 0; }
+.top-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.pr-no { font-family: var(--font-mono); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.pr-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.progress { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted); }
+.meter { flex: 1; height: 6px; border-radius: 3px; background: var(--sunken); overflow: hidden; display: flex; }
+.meter i { display: block; height: 100%; }
+.meter .m-ok { background: var(--ok); }
+.meter .m-fix { background: var(--warn); }
+.progress b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.nav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; margin-inline: -4px; padding-bottom: 6px; }
+.nav::-webkit-scrollbar { display: none; }
+.nav a { flex: none; padding: 4px 10px; border-radius: 999px; font-size: 13px; text-decoration: none; color: var(--muted); }
+.nav a:hover { background: var(--sunken); color: var(--fg); }
+
+main.wrap { display: grid; gap: 36px; padding-block: 20px 48px; }
+section { display: grid; gap: 14px; min-width: 0; scroll-margin-top: 110px; }
+h2 { font-size: 17px; margin: 0; display: flex; align-items: baseline; gap: 8px; text-wrap: balance; }
+h2 small { font-size: 12.5px; font-weight: 400; color: var(--muted); }
+.lead { margin: 0; }
+.hint { margin: 0; font-size: 13px; color: var(--muted); }
+
+/* 概要: 区分ごとの件数を 1 本の帯で */
+.composition { display: grid; gap: 8px; }
+.band { display: flex; height: 10px; border-radius: 5px; overflow: hidden; gap: 2px; }
+.band i { display: block; min-width: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; display: inline-block; }
+.s-must { background: var(--c-must); } .s-skim { background: var(--c-skim); } .s-tests { background: var(--c-tests); }
+.s-docs { background: var(--c-docs); } .s-skip { background: var(--c-skip); }
+.s-outside { background: transparent; border: 1.5px dashed var(--edge); }
+
+/* ファイルの関係図 */
+.map { position: relative; display: grid; gap: 30px; padding: 16px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.map svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.map svg path.edge { fill: none; stroke: var(--edge); stroke-width: 1.4; }
+.map svg path.edge.hot { stroke: var(--edge-hot); stroke-width: 2.2; }
+.map svg .arrow { fill: var(--edge); }
+.map svg .arrow-hot { fill: var(--edge-hot); }
+.layer { position: relative; display: grid; gap: 6px; }
+.layer-name { font-size: 11px; letter-spacing: 0.08em; color: var(--muted); }
+.nodes { display: flex; flex-wrap: wrap; gap: 8px; }
+.node { position: relative; z-index: 1; display: grid; gap: 4px; text-align: left; max-width: 100%; padding: 7px 10px 7px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; }
+.node::before { content: ""; position: absolute; left: 0; top: 6px; bottom: 6px; width: 3px; border-radius: 2px; background: var(--node-color, var(--c-skip)); }
+.node .n-name { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.node.outside { border-style: dashed; background: transparent; }
+.node.outside::before { display: none; }
+.node.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.node.dim { opacity: 0.45; }
+.node-detail { margin: 0; padding: 12px 14px; border-radius: var(--radius); background: var(--sunken); font-size: 14px; display: grid; gap: 4px; }
+.node-detail .nd-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+
+/* 差分の行数のミニバー（GitHub の 5 マスと同じ考え方） */
+.stat { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.stat .add { color: var(--add-fg); } .stat .del { color: var(--del-fg); }
+.blocks { display: inline-flex; gap: 1.5px; }
+.blocks i { width: 7px; height: 7px; border-radius: 1.5px; background: var(--sunken); }
+.blocks i.a { background: var(--add-mark); } .blocks i.d { background: var(--del-mark); }
+
+/* 確かめること */
+.cards { display: grid; gap: 14px; }
+.card { display: grid; gap: 12px; min-width: 0; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.card.st-ok { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+.card.st-fix { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); }
+.card-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.kind { padding: 1px 8px; border-radius: 999px; font-weight: 600; letter-spacing: 0.02em; }
+.k-behavior { background: var(--warn-soft); color: var(--warn); }
+.k-decision { background: var(--accent-soft); color: var(--accent); }
+.k-assumption { background: var(--sunken); color: var(--fg); }
+.k-unlisted { background: var(--del-bg); color: var(--del-fg); }
+.card h3 { margin: 0; font-size: 16px; line-height: 1.55; text-wrap: balance; }
+.card p { margin: 0; }
+.ba { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ba > div { min-width: 0; padding: 10px 12px; border-radius: 8px; font-size: 14px; }
+.ba .b { background: var(--del-bg); } .ba .a { background: var(--add-bg); }
+.ba .lbl { display: block; font-size: 11px; letter-spacing: 0.08em; color: var(--muted); }
+@media (max-width: 480px) { .ba { grid-template-columns: 1fr; } }
+.alt { font-size: 14px; color: var(--muted); }
+.alt b { color: var(--fg); font-weight: 600; }
+.excerpt { margin: 0; display: grid; gap: 0; min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.excerpt figcaption { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; padding: 6px 10px; background: var(--sunken); font-size: 12px; }
+.excerpt figcaption .mono { overflow-wrap: anywhere; }
+.excerpt figcaption a { white-space: nowrap; }
+.diff { overflow-x: auto; background: var(--surface); }
+.diff table { border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; min-width: 100%; }
+.diff td { padding: 0 8px; white-space: pre; vertical-align: top; }
+.diff td.no { color: var(--muted); text-align: right; user-select: none; padding: 0 4px; min-width: 2.6em; opacity: 0.8; font-variant-numeric: tabular-nums; }
+.diff td.sg { user-select: none; padding: 0 2px 0 4px; }
+.diff tr.add { background: var(--add-bg); } .diff tr.add td.code, .diff tr.add td.sg { color: var(--add-fg); }
+.diff tr.del { background: var(--del-bg); } .diff tr.del td.code, .diff tr.del td.sg { color: var(--del-fg); }
+.diff tr.gap td { background: var(--hunk-bg); color: var(--hunk-fg); text-align: left; }
+.diff .more { padding: 4px 10px; font-size: 12px; color: var(--muted); background: var(--sunken); }
+.wrap-toggle { justify-self: start; font-size: 12px; background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; }
+.diff.wrapped td.code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.verdict { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.verdict button { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-size: 13.5px; }
+.verdict button[aria-pressed="true"].v-ok { background: var(--ok); border-color: var(--ok); color: var(--surface); }
+.verdict button[aria-pressed="true"].v-fix { background: var(--warn); border-color: var(--warn); color: var(--surface); }
+.verdict .stale { font-size: 12px; color: var(--muted); }
+
+/* 要件とテスト */
+.reqs { display: grid; gap: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.req { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; padding: 12px 14px; border-top: 1px solid var(--line); min-width: 0; }
+.req:first-child { border-top: 0; }
+.req > :not(.pill) { grid-column: 2; }
+.pill { grid-column: 1; grid-row: 1 / span 4; align-self: start; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.p-ok { background: var(--ok-soft); color: var(--ok); }
+.p-partial, .p-missing { background: var(--warn-soft); color: var(--warn); }
+.req-text { font-weight: 600; min-width: 0; }
+.req-meta { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: 12.5px; color: var(--muted); min-width: 0; }
+.req-meta code { font-size: 11.5px; }
+.req-note { grid-column: 2; font-size: 12.5px; color: var(--muted); min-width: 0; }
+
+/* 差分の外・動作確認・ファイル */
+.list { display: grid; gap: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.row { display: grid; gap: 2px; padding: 10px 14px; border-top: 1px solid var(--line); min-width: 0; }
+.row:first-child { border-top: 0; }
+.row-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; align-items: baseline; min-width: 0; }
+.row-head a, .row-head .mono { font-family: var(--font-mono); font-size: 12.5px; overflow-wrap: anywhere; min-width: 0; }
+.row .note { font-size: 13.5px; color: var(--muted); }
+.check { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 8px; min-width: 0; }
+.check h3 { margin: 0; font-size: 15px; }
+.check p { margin: 0; }
+.code-block { position: relative; min-width: 0; }
+.code-block pre { margin: 0; padding: 10px 12px; padding-right: 64px; background: var(--sunken); border-radius: 8px; overflow-x: auto; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; }
+.copy { position: absolute; top: 6px; right: 6px; padding: 2px 10px; font-size: 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; }
+.group { display: grid; gap: 8px; }
+.group h3 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.group h3 small { color: var(--muted); font-weight: 400; }
+details.group > summary { cursor: pointer; list-style: none; }
+details.group > summary::-webkit-details-marker { display: none; }
+details.group > summary h3::after { content: "開く"; font-size: 12px; font-weight: 400; color: var(--accent); margin-left: auto; }
+details.group[open] > summary h3::after { content: "閉じる"; }
+footer.wrap { padding-block: 0 40px; font-size: 12.5px; color: var(--muted); display: grid; gap: 4px; }
+.empty { margin: 0; padding: 12px 14px; border-radius: var(--radius); background: var(--sunken); color: var(--muted); font-size: 14px; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <div class="top-row"><a class="pr-no" id="pr-no" href="#"></a><span class="pr-title" id="pr-title"></span></div>
+    <div class="progress"><span id="progress-text"></span><div class="meter" aria-hidden="true"><i class="m-ok" id="m-ok"></i><i class="m-fix" id="m-fix"></i></div><span id="save-state"></span></div>
+    <nav class="nav" id="nav" aria-label="ページ内の移動"></nav>
+  </div>
+</header>
+<main class="wrap" id="main"></main>
+<footer class="wrap" id="foot"></footer>
+
+<script type="application/json" id="review-data">/*__REVIEW_DATA__*/null</script>
+<script>
+(() => {
+  const DATA = JSON.parse(document.getElementById('review-data').textContent)
+  const SECTION = { must: '必読', skim: '流し読み', tests: 'テスト', docs: 'ドキュメント', skip: '見なくてよい' }
+  const KIND = { behavior: '振る舞いの変化', decision: '実装で決めたこと', assumption: '前提・仮定', unlisted: '本文に無い変更' }
+  const REQ = { ok: '対応あり', partial: '一部', missing: 'テストなし' }
+  const ORDER = ['must', 'skim', 'tests', 'docs', 'skip']
+
+  // ---- DOM の小道具 ----
+  const h = (tag, attrs = {}, ...kids) => {
+    const el = document.createElement(tag)
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v === undefined || v === null || v === false) continue
+      if (k === 'class') el.className = v
+      else if (k === 'html') el.innerHTML = v
+      else if (k.startsWith('on')) el.addEventListener(k.slice(2), v)
+      else el.setAttribute(k, v === true ? '' : v)
+    }
+    for (const kid of kids.flat(Infinity)) if (kid !== null && kid !== undefined && kid !== false) el.append(kid.nodeType ? kid : String(kid))
+    return el
+  }
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+  // `code`、**太字**、改行だけを解釈する。HTML はすべてエスケープし、code の中は太字にしない
+  const inline = (s) => {
+    const codes = []
+    const text = esc(s)
+      .replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000` })
+      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/\n/g, '<br>')
+    return text.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[Number(i)]}</code>`)
+  }
+  const ext = (href, text) => h('a', { href, target: '_blank', rel: 'noopener' }, text)
+
+  const stat = (add, del) => {
+    const total = add + del
+    const n = total === 0 ? 0 : Math.max(1, Math.round((add / total) * 5))
+    const blocks = Array.from({ length: 5 }, (_, i) => h('i', { class: total === 0 ? '' : i < n ? 'a' : 'd' }))
+    return h('span', { class: 'stat', title: `${add} 行追加、${del} 行削除` }, h('span', { class: 'add' }, `+${add}`), h('span', { class: 'del' }, `−${del}`), h('span', { class: 'blocks' }, blocks))
+  }
+  const byPath = new Map(DATA.files.map((f) => [f.path, f]))
+  const outsideByPath = new Map(DATA.outside.map((o) => [o.path, o]))
+
+  // ---- 確認の状態（アカウントに保存。使えなければこの端末に保存） ----
+  const LOCAL_KEY = `review-guide:${DATA.repo}#${DATA.number}`
+  let checks = {}
+  try { checks = JSON.parse(localStorage.getItem(LOCAL_KEY) || '{}') || {} } catch { checks = {} }
+  let remote = null
+  let saving = false
+  let pending = false
+  const saveLabel = (text) => { document.getElementById('save-state').textContent = text }
+  saveLabel('この端末に保存')
+  const merge = (incoming) => {
+    for (const [id, v] of Object.entries(incoming || {})) {
+      if (!v || typeof v !== 'object') continue
+      if (!checks[id] || (v.at || 0) > (checks[id].at || 0)) checks[id] = v
+    }
+  }
+  async function pushRemote() {
+    if (!remote) return
+    if (saving) { pending = true; return }
+    saving = true
+    try { await remote.set({ checks, updatedAt: Date.now() }); saveLabel('アカウントに保存') }
+    catch { saveLabel('アカウントに保存できませんでした。この端末には保存しています') }
+    finally { saving = false; if (pending) { pending = false; pushRemote() } }
+  }
+  function setCheck(id, state) {
+    if (state) checks[id] = { state, head: DATA.head, at: Date.now() }
+    else checks[id] = { state: null, head: DATA.head, at: Date.now() }
+    try { localStorage.setItem(LOCAL_KEY, JSON.stringify(checks)) } catch {}
+    pushRemote()
+    refreshCards()
+  }
+  const stateOf = (id) => {
+    const c = checks[id]
+    if (!c || !c.state) return { state: null, stale: false }
+    return c.head === DATA.head ? { state: c.state, stale: false } : { state: null, stale: true, was: c.state }
+  }
+  async function connect() {
+    if (!window.claude || typeof window.claude.use !== 'function') return
+    try {
+      const [db, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')])
+      if (!db || !user) return
+      const uid = await user.id()
+      if (!uid) return
+      const docId = `${DATA.repo}_${DATA.number}`.replace(/[^\w-]/g, '_')
+      const ref = db.collection(`data/users/${uid}`).doc(docId)
+      const timer = setTimeout(() => saveLabel('この端末に保存'), 10000)
+      saveLabel('読み込み中…')
+      ref.onSnapshot(
+        (snap) => {
+          clearTimeout(timer)
+          const first = !remote
+          remote = ref
+          merge(snap.data()?.checks)
+          try { localStorage.setItem(LOCAL_KEY, JSON.stringify(checks)) } catch {}
+          saveLabel('アカウントに保存')
+          refreshCards()
+          // 端末だけにあった印を、最初の 1 回だけアカウントへ上げる
+          if (first && Object.keys(checks).some((id) => !(snap.data()?.checks || {})[id])) pushRemote()
+        },
+        () => { clearTimeout(timer); saveLabel('この端末に保存') },
+      )
+    } catch { saveLabel('この端末に保存') }
+  }
+
+  // ---- ヘッダー ----
+  const prNo = document.getElementById('pr-no')
+  prNo.textContent = `#${DATA.number}`
+  prNo.href = DATA.url
+  prNo.target = '_blank'
+  prNo.rel = 'noopener'
+  document.getElementById('pr-title').textContent = DATA.title
+  const main = document.getElementById('main')
+  const navItems = []
+  const section = (id, title, note, ...kids) => {
+    navItems.push([id, title])
+    return h('section', { id, 'aria-labelledby': `${id}-h` }, h('h2', { id: `${id}-h` }, title, note ? h('small', {}, note) : null), ...kids)
+  }
+
+  // ---- 概要 ----
+  const total = DATA.files.length
+  main.append(
+    h('section', { id: 'summary' },
+      h('p', { class: 'lead', html: inline(DATA.summary) }),
+      h('div', { class: 'composition' },
+        h('div', { class: 'band', role: 'img', 'aria-label': ORDER.map((s) => `${SECTION[s]} ${DATA.counts[s]} 件`).join('、') },
+          ORDER.filter((s) => DATA.counts[s]).map((s) => h('i', { class: `s-${s}`, style: `flex:${DATA.counts[s]}` }))),
+        h('div', { class: 'legend' }, ORDER.map((s) => h('span', {}, h('span', { class: `dot s-${s}` }), `${SECTION[s]} ${DATA.counts[s]}`)),
+          h('span', { class: 'mono' }, `${total} ファイル · ${DATA.base} ← ${DATA.headRef}`)),
+      ),
+    ),
+  )
+
+  // ---- ファイルの関係図 ----
+  if (DATA.map && DATA.map.layers.length) {
+    const mapEl = h('div', { class: 'map' })
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('aria-hidden', 'true')
+    svg.innerHTML = '<defs><marker id="arw" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0,0 L8,4 L0,8 z"/></marker><marker id="arw-hot" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow-hot" d="M0,0 L8,4 L0,8 z"/></marker></defs><g id="edges"></g>'
+    mapEl.append(svg)
+    const nodeEls = new Map()
+    for (const layer of DATA.map.layers) {
+      const nodes = h('div', { class: 'nodes' })
+      for (const p of layer.paths) {
+        const f = byPath.get(p)
+        const o = outsideByPath.get(p)
+        const el = h('button', {
+          type: 'button',
+          class: `node${o ? ' outside' : ''}`,
+          style: f ? `--node-color: var(--c-${f.section})` : null,
+          'aria-label': `${(f || o).name}（${f ? SECTION[f.section] : '差分の外'}）`,
+          onclick: () => select(p),
+        }, h('span', { class: 'n-name' }, (f || o).name), f ? stat(f.additions, f.deletions) : h('span', { class: 'stat' }, '差分の外'))
+        nodeEls.set(p, el)
+        nodes.append(el)
+      }
+      mapEl.append(h('div', { class: 'layer' }, h('div', { class: 'layer-name' }, layer.name), nodes))
+    }
+    const detail = h('p', { class: 'node-detail', hidden: true, 'aria-live': 'polite' })
+    let selected = null
+    function select(p) {
+      selected = selected === p ? null : p
+      const linked = new Set(selected ? [selected] : [])
+      if (selected) for (const e of DATA.map.edges) { if (e.from === selected) linked.add(e.to); if (e.to === selected) linked.add(e.from) }
+      for (const [path, el] of nodeEls) {
+        el.classList.toggle('sel', path === selected)
+        el.classList.toggle('dim', !!selected && !linked.has(path))
+      }
+      drawEdges()
+      if (!selected) { detail.hidden = true; return }
+      const f = byPath.get(selected)
+      const o = outsideByPath.get(selected)
+      const outs = DATA.map.edges.filter((e) => e.from === selected)
+      const ins = DATA.map.edges.filter((e) => e.to === selected)
+      const nm = (q) => (byPath.get(q) || outsideByPath.get(q)).name
+      detail.replaceChildren(
+        h('span', { class: 'nd-head' }, h('b', { class: 'mono' }, (f || o).name), h('span', { class: 'hint' }, f ? SECTION[f.section] : '差分の外'), ext((f || o).link, f ? '差分を開く ↗' : 'コードを開く ↗')),
+        h('span', { html: inline((f ? f.note : o.note) || '説明なし') }),
+        outs.length ? h('span', { class: 'hint' }, '→ ', outs.map((e) => `${nm(e.to)}${e.label ? `（${e.label}）` : ''}`).join('、')) : null,
+        ins.length ? h('span', { class: 'hint' }, '← ', ins.map((e) => `${nm(e.from)}${e.label ? `（${e.label}）` : ''}`).join('、')) : null,
+      )
+      detail.hidden = false
+    }
+    function drawEdges() {
+      const g = svg.querySelector('#edges')
+      const box = mapEl.getBoundingClientRect()
+      const parts = []
+      for (const e of DATA.map.edges) {
+        const a = nodeEls.get(e.from)?.getBoundingClientRect()
+        const b = nodeEls.get(e.to)?.getBoundingClientRect()
+        if (!a || !b) continue
+        const hot = selected && (e.from === selected || e.to === selected)
+        let d
+        if (b.top >= a.bottom - 2) {
+          const x1 = a.left + a.width / 2 - box.left, y1 = a.bottom - box.top
+          const x2 = b.left + b.width / 2 - box.left, y2 = b.top - box.top - 2
+          const my = (y1 + y2) / 2
+          d = `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`
+        } else if (a.top >= b.bottom - 2) {
+          const x1 = a.left + a.width / 2 - box.left, y1 = a.top - box.top
+          const x2 = b.left + b.width / 2 - box.left, y2 = b.bottom - box.top + 2
+          const my = (y1 + y2) / 2
+          d = `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`
+        } else {
+          const right = b.left > a.left
+          const x1 = (right ? a.right : a.left) - box.left, y1 = a.top + a.height / 2 - box.top
+          const x2 = (right ? b.left - 2 : b.right + 2) - box.left, y2 = b.top + b.height / 2 - box.top
+          d = `M${x1},${y1} C${(x1 + x2) / 2},${y1 - 18} ${(x1 + x2) / 2},${y2 - 18} ${x2},${y2}`
+        }
+        parts.push(`<path class="edge${hot ? ' hot' : ''}" d="${d}" marker-end="url(#${hot ? 'arw-hot' : 'arw'})"/>`)
+      }
+      g.innerHTML = parts.join('')
+    }
+    main.append(section('map', 'ファイルの関係図', '矢印は使う側から使われる側へ。ファイルをタップすると説明が出ます', mapEl, detail,
+      h('div', { class: 'legend' }, ORDER.filter((s) => DATA.counts[s]).map((s) => h('span', {}, h('span', { class: `dot s-${s}` }), SECTION[s])),
+        DATA.outside.length ? h('span', {}, h('span', { class: 'dot s-outside' }), '差分の外') : null)))
+    const redraw = () => requestAnimationFrame(drawEdges)
+    if ('ResizeObserver' in window) new ResizeObserver(redraw).observe(mapEl)
+    window.addEventListener('resize', redraw)
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(redraw)
+    redraw()
+  }
+
+  // ---- 確かめること ----
+  const cardEls = []
+  const diffTable = (ex) => {
+    const rows = ex.lines.map((l) => {
+      if (l.t === '@') return h('tr', { class: 'gap' }, h('td', { class: 'no' }), h('td', { class: 'sg' }), h('td', { class: 'code' }, l.text === '…' ? '⋯' : l.text))
+      const cls = l.t === '+' ? 'add' : l.t === '-' ? 'del' : ''
+      // 行番号は新しい側。削除行だけ古い側の番号を出す
+      return h('tr', { class: cls }, h('td', { class: 'no', title: l.t === '-' ? '変更前の行番号' : '変更後の行番号' }, l.t === '-' ? l.old : l.new), h('td', { class: 'sg' }, l.t === ' ' ? '' : l.t === '-' ? '−' : '+'), h('td', { class: 'code' }, l.text))
+    })
+    const box = h('div', { class: 'diff' }, h('table', {}, h('tbody', {}, rows)), ex.truncated ? h('div', { class: 'more' }, '続きは GitHub の差分で') : null)
+    const toggle = h('button', { type: 'button', class: 'wrap-toggle', onclick: () => { const on = box.classList.toggle('wrapped'); toggle.textContent = on ? '折り返さない' : '長い行を折り返す' } }, '長い行を折り返す')
+    const range = ex.from ? `L${ex.from}${ex.to && ex.to !== ex.from ? `–${ex.to}` : ''}` : ''
+    return [h('figure', { class: 'excerpt' }, h('figcaption', {}, h('span', { class: 'mono' }, `${ex.name} ${range}`), ext(ex.link, 'GitHub ↗')), box), toggle]
+  }
+  const cards = h('div', { class: 'cards' })
+  DATA.cards.forEach((c, i) => {
+    const btnOk = h('button', { type: 'button', class: 'v-ok', 'aria-pressed': 'false', onclick: () => setCheck(c.id, stateOf(c.id).state === 'ok' ? null : 'ok') }, '確認した')
+    const btnFix = h('button', { type: 'button', class: 'v-fix', 'aria-pressed': 'false', onclick: () => setCheck(c.id, stateOf(c.id).state === 'fix' ? null : 'fix') }, '要修正')
+    const staleEl = h('span', { class: 'stale', hidden: true }, '前の head で確認済み')
+    const el = h('article', { class: 'card', id: `card-${c.id}` },
+      h('div', { class: 'card-head' }, h('span', { class: `kind k-${c.kind}` }, KIND[c.kind]), h('span', { class: 'mono' }, `${i + 1} / ${DATA.cards.length}`)),
+      h('h3', { html: inline(c.title) }),
+      h('p', { html: inline(c.body) }),
+      c.before !== undefined ? h('div', { class: 'ba' }, h('div', { class: 'b' }, h('span', { class: 'lbl' }, 'これまで'), h('span', { html: inline(c.before) })), h('div', { class: 'a' }, h('span', { class: 'lbl' }, 'これから'), h('span', { html: inline(c.after) }))) : null,
+      c.alternatives ? h('p', { class: 'alt', html: `<b>選ばなかった案</b> ${inline(c.alternatives)}` }) : null,
+      c.excerpts.map(diffTable),
+      h('div', { class: 'verdict', role: 'group', 'aria-label': '確認の状態' }, btnOk, btnFix, staleEl),
+    )
+    cardEls.push({ c, el, btnOk, btnFix, staleEl })
+    cards.append(el)
+  })
+  main.append(section('cards', '確かめること', `${DATA.cards.length} 件`, cards))
+  function refreshCards() {
+    let ok = 0, fix = 0
+    for (const { c, el, btnOk, btnFix, staleEl } of cardEls) {
+      const s = stateOf(c.id)
+      btnOk.setAttribute('aria-pressed', String(s.state === 'ok'))
+      btnFix.setAttribute('aria-pressed', String(s.state === 'fix'))
+      el.classList.toggle('st-ok', s.state === 'ok')
+      el.classList.toggle('st-fix', s.state === 'fix')
+      staleEl.hidden = !s.stale
+      if (s.state === 'ok') ok++
+      if (s.state === 'fix') fix++
+    }
+    const n = DATA.cards.length || 1
+    document.getElementById('m-ok').style.width = `${(ok / n) * 100}%`
+    document.getElementById('m-fix').style.width = `${(fix / n) * 100}%`
+    const pt = document.getElementById('progress-text')
+    pt.replaceChildren('確認 ', h('b', {}, `${ok} / ${DATA.cards.length}`), fix ? `　要修正 ${fix}` : '')
+  }
+
+  // ---- 要件とテスト ----
+  if (DATA.requirements.length) {
+    const rank = { missing: 0, partial: 1, ok: 2 }
+    const reqs = [...DATA.requirements].sort((a, b) => rank[a.status] - rank[b.status])
+    const gaps = reqs.filter((r) => r.status !== 'ok').length
+    main.append(section('reqs', '要件とテスト', `✅ ${reqs.length - gaps} · ⚠️ ${gaps}`,
+      h('div', { class: 'reqs' }, reqs.map((r) => h('div', { class: 'req' },
+        h('span', { class: `pill p-${r.status}` }, r.status === 'ok' ? `✓ ${REQ.ok}` : `⚠ ${REQ[r.status]}`),
+        h('span', { class: 'req-text', html: inline(r.text) }),
+        r.impl.length ? h('span', { class: 'req-meta' }, '実装', r.impl.map((x) => ext(x.link, `${x.name}${x.line ? ` L${x.line}` : ''}`))) : h('span', { class: 'req-meta' }, '実装の場所は挙げていません'),
+        r.tests.length ? h('span', { class: 'req-meta' }, 'テスト', r.tests.map((t) => h('code', {}, t))) : (r.note ? null : h('span', { class: 'req-meta' }, '確かめるテストはありません')),
+        r.note ? h('span', { class: 'req-note', html: inline(r.note) }) : null,
+      )))))
+  }
+
+  // ---- 差分の外で影響を受ける箇所 ----
+  if (DATA.outside.length || !DATA.outsideChecked) {
+    main.append(section('outside', '差分の外で影響を受ける箇所', DATA.outside.length ? `${DATA.outside.length} 件` : '',
+      !DATA.outsideChecked ? h('p', { class: 'empty' }, '差分の外は調べていません。変えた関数や型の呼び出し元は、自分で確かめてください。') : null,
+      DATA.outside.length ? h('div', { class: 'list' }, DATA.outside.map((o) => h('div', { class: 'row' },
+        h('div', { class: 'row-head' }, ext(o.link, `${o.name} L${o.line}`), o.from ? h('span', { class: 'hint' }, `← ${byPath.get(o.from)?.name ?? o.from}`) : null),
+        h('span', { class: 'note', html: inline(o.note) }),
+      ))) : null))
+  }
+
+  // ---- 動作確認 ----
+  if (DATA.checks.length) {
+    const steps = (text) => {
+      const out = []
+      const re = /```[^\n]*\n([\s\S]*?)```/g
+      let last = 0, m
+      while ((m = re.exec(text))) {
+        const before = text.slice(last, m.index).trim()
+        if (before) out.push(h('p', { html: inline(before) }))
+        const code = m[1].replace(/\n$/, '')
+        const btn = h('button', { type: 'button', class: 'copy', onclick: () => {
+          const done = () => { btn.textContent = 'コピーしました'; setTimeout(() => { btn.textContent = 'コピー' }, 1500) }
+          try { navigator.clipboard.writeText(code).then(done, () => selectText(pre)) } catch { selectText(pre) }
+        } }, 'コピー')
+        const pre = h('pre', {}, code)
+        out.push(h('div', { class: 'code-block' }, pre, btn))
+        last = re.lastIndex
+      }
+      const rest = text.slice(last).trim()
+      if (rest) out.push(h('p', { html: inline(rest) }))
+      return out
+    }
+    const selectText = (el) => { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r) }
+    main.append(section('checks', '動作確認の手順', `${DATA.checks.length} 件`, DATA.checks.map((c) => h('div', { class: 'check' }, h('h3', {}, c.title), steps(c.steps)))))
+  }
+
+  // ---- ファイル ----
+  const groups = ORDER.filter((s) => DATA.counts[s]).map((s) => {
+    const files = DATA.files.filter((f) => f.section === s)
+    const rows = h('div', { class: 'list' }, files.map((f) => h('div', { class: 'row' },
+      h('div', { class: 'row-head' }, ext(f.link, f.name), stat(f.additions, f.deletions)),
+      f.note ? h('span', { class: 'note', html: inline(f.note) }) : null,
+    )))
+    const note = s === 'tests' ? DATA.testsNote : s === 'skip' ? DATA.skipNote : ''
+    const heading = h('h3', {}, h('span', { class: `dot s-${s}` }), SECTION[s], h('small', {}, `${files.length} 件${s === 'skip' ? '・Viewed を付ける対象' : ''}`))
+    const body = [note ? h('p', { class: 'hint', html: inline(note) }) : null, rows]
+    return s === 'skip' ? h('details', { class: 'group' }, h('summary', {}, heading), ...body) : h('div', { class: 'group' }, heading, ...body)
+  })
+  main.append(section('files', 'ファイル', `${total} 件`, ...groups))
+
+  // ---- ナビとフッター ----
+  document.getElementById('nav').append(...navItems.map(([id, title]) => h('a', { href: `#${id}` }, title)))
+  const when = new Date(DATA.generatedAt)
+  document.getElementById('foot').append(
+    h('span', {}, 'head ', h('span', { class: 'mono' }, DATA.head.slice(0, 7)), ` · ${isNaN(when) ? DATA.generatedAt : when.toLocaleString('ja-JP')} に作成`),
+    h('span', {}, 'PR に push があると内容は古くなります。/review-guide を再実行すると、このページが更新されます。'),
+    h('span', {}, '仕分けと確かめることは Claude の判断で、機械的な検証はしていません。'),
+  )
+
+  refreshCards()
+  connect()
+})()
+</script>
