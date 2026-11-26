@@ -114,7 +114,7 @@ test('JSON: キー名に関係なく @ を含む値を集め、ネストと配�
   assert.ok(!detects('c.json', { secret: 123456789 }, '123456789'))
 })
 
-test('6 文字未満の値と true / false / null などは集めない。6 文字ちょうどは集める', () => {
+test('6 文字未満の値と、localhost / undefined / example は集めない（大文字小文字は問わない）。6 文字ちょうどは集める', () => {
   assert.ok(!detects('c.json', { secret: 'abcde' }, 'abcde'))
   assert.ok(detects('c.json', { secret: 'abcdef' }, 'abcdef'))
   assert.ok(detects('c.json', { secret: '  abcdef  ' }, 'abcdef'))
