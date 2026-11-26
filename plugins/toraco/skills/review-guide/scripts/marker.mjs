@@ -1,4 +1,4 @@
-// レビューガイドのコメントに埋め込む「見なくてよい」一覧の読み書きと、
+// レビューガイドのコメントに埋め込む Viewed の対象（見なくてよい・流し読み）の一覧の読み書きと、
 // 実際に Viewed を付けるパスの絞り込み。API 呼び出しは apply.mjs が行う。
 
 import { classifyFile, DEFAULT_NEVER_SKIP, matchesAny } from './classify.mjs'

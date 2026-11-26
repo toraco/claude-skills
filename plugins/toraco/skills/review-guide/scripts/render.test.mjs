@@ -47,10 +47,12 @@ test('仕分け漏れ・重複・未知のパス・説明の欠落を検出す�
   assert.match(errors, /仕分けられていないファイルがあります: docs\/spec\.md/)
 })
 
-test('必ず見るパスは「見なくてよい」に入れられない', () => {
+test('必ず見るパスは、Viewed を付ける区分（見なくてよい・流し読み）に入れられない', () => {
   const withMigration = [...files, file('prisma/migrations/1/migration.sql')]
   const bad = { ...spec, skip: [...spec.skip, { path: 'prisma/migrations/1/migration.sql', note: '小さい' }] }
-  assert.match(validate(bad, withMigration).join('\n'), /必ず見るパスなので/)
+  assert.match(validate(bad, withMigration).join('\n'), /skip: 必ず見るパスなので/)
+  const badSkim = { ...spec, skim: [...spec.skim, { path: 'prisma/migrations/1/migration.sql', note: '小さい' }] }
+  assert.match(validate(badSkim, withMigration).join('\n'), /skim: 必ず見るパスなので/)
 })
 
 test('確かめることと概要が無ければ通さない', () => {
@@ -78,17 +80,15 @@ test('カードの種類・前後の対・引用する行の範囲を検査す�
   assert.match(errors[4], /変更ファイルに無いパス/)
 })
 
-test('関係図・差分の外・要件の誤りを検出する', () => {
+test('関係図・要件の誤りを検出する', () => {
   const bad = {
     ...spec,
     requirements: [{ text: 'r', status: 'done' }],
-    outside: [{ path: 'src/usecase/index.ts', line: 3, note: '変更ファイル' }],
     map: { layers: [{ name: 'a', paths: ['src/usecase/index.ts', 'src/nowhere.ts'] }], edges: [{ from: 'src/usecase/index.ts', to: 'docs/spec.md' }] },
   }
   const errors = validate(bad, files).join('\n')
   assert.match(errors, /requirements\[0\]: status/)
-  assert.match(errors, /outside\[0\]: PR の変更ファイルは outside に入れません/)
-  assert.match(errors, /変更ファイルにも outside にも無いパスです: src\/nowhere\.ts/)
+  assert.match(errors, /map\.layers\[0\]: PR の変更ファイルに無いパスです: src\/nowhere\.ts/)
   assert.match(errors, /map\.edges\[0\]/)
 })
 
@@ -116,15 +116,17 @@ test('抜粋は新しい側の行番号で切り出し、離れた hunk の間�
 
 const PAGE = 'https://claude.ai/code/artifact/0b5e7c1a-2f3d-4e5f-8a9b-1c2d3e4f5a6b'
 
-test('ページが無いときのコメントは、確かめることを差分つきですべて載せる', () => {
+test('ページが無いときのコメントは、確かめることをすべて載せ、差分はリンクだけにする', () => {
   const body = renderComment(spec, files, pr, { repo: 'o/r' })
   assert.ok(body.startsWith(GUIDE_MARKER))
   assert.match(body, /head `abcdef0` の 5 ファイル。会員の認可をホテル単位にする/)
   assert.match(body, /\*\*1\. 認可の対象が変わる\*\*/)
   assert.match(body, /- これまで: 全体\n- これから: ホテルごと/)
-  assert.match(body, /\[`usecase\/index\.ts` 差分\]\(https:\/\/github\.com\/o\/r\/pull\/12\/files#diff-[0-9a-f]{64}R?\d*\)\n\n```diff\n-a\n\+b\n```/)
+  assert.match(body, /- 根拠の差分: \[`usecase\/index\.ts` 差分\]\(https:\/\/github\.com\/o\/r\/pull\/12\/files#diff-[0-9a-f]{64}R?\d*\)\n/)
+  assert.doesNotMatch(body, /```/)
   assert.doesNotMatch(body, /レビューページ/)
-  assert.deepEqual(parseMarker(body), { head: 'abcdef0', paths: ['src/routes/admin/user/handlers.ts'] })
+  assert.match(body, /### Viewed を付けるファイル（2 件）/)
+  assert.deepEqual(parseMarker(body), { head: 'abcdef0', paths: ['src/routes/admin/user/handlers.ts', 'src/routes/admin/hotel/user/handlers.ts'] })
 })
 
 test('ページがあるときのコメントは、上位 3 件とページへのリンクにする', () => {
@@ -137,12 +139,6 @@ test('ページがあるときのコメントは、上位 3 件とページへ�
   assert.throws(() => renderComment(spec, files, pr, { repo: 'o/r', pageUrl: 'https://example.com/x' }), /artifact/)
 })
 
-test('差分に ``` を含むときは、それより長いフェンスで囲む', () => {
-  const md = [file('README.md', { patch: '@@ -1 +1 @@\n-a\n+```sh' })]
-  const s2 = { summary: 's', cards: [{ kind: 'decision', title: 't', body: 'b', excerpts: [{ path: 'README.md' }] }], must: [], skim: [], tests: [], docs: [{ path: 'README.md' }], skip: [] }
-  assert.match(renderComment(s2, md, pr, { repo: 'o/r' }), /````diff\n-a\n\+```sh\n````/)
-})
-
 test('要件は、ページがあるときは足りないものだけをコメントに出す', () => {
   const withReq = { ...spec, requirements: [{ text: '満たす', status: 'ok' }, { text: '足りない', status: 'missing' }] }
   const body = renderComment(withReq, files, pr, { repo: 'o/r', pageUrl: PAGE })
@@ -150,19 +146,19 @@ test('要件は、ページがあるときは足りないものだけをコメ�
   assert.doesNotMatch(body, /満たす/)
 })
 
-test('ページのデータは、リンク・区分・抜粋を解決し、HTML に安全に埋め込む', () => {
+test('ページのデータは、リンク・区分・Viewed を解決し、HTML に安全に埋め込む', () => {
   const s2 = {
     ...spec,
-    outside: [{ path: 'src/caller.ts', line: 7, note: '呼び出し元', from: 'src/usecase/index.ts' }],
-    map: { layers: [{ name: '中心', paths: ['src/usecase/index.ts', 'src/caller.ts'] }], edges: [{ from: 'src/caller.ts', to: 'src/usecase/index.ts' }] },
+    map: { layers: [{ name: '中心', paths: ['src/usecase/index.ts', 'src/routes/admin/hotel/user/handlers.ts'] }], edges: [{ from: 'src/routes/admin/hotel/user/handlers.ts', to: 'src/usecase/index.ts' }] },
     summary: '</script><script>alert(1)</script>',
   }
   assert.deepEqual(validate(s2, files), [])
   const data = buildPageData(s2, files, { ...pr, title: ':sparkles: 認可を変える', head: { sha: 'abcdef0123456789', ref: 'feat' } }, { repo: 'o/r', generatedAt: 't' })
   assert.equal(data.title, '認可を変える')
   assert.equal(data.files.find((f) => f.path === 'src/usecase/index.ts').section, 'must')
-  assert.equal(data.outside[0].link, 'https://github.com/o/r/blob/abcdef0123456789/src/caller.ts#L7')
-  assert.deepEqual(data.cards[0].excerpts[0].lines.map((l) => l.t), ['-', '+'])
+  assert.deepEqual(data.files.filter((f) => f.viewed).map((f) => f.path), ['src/routes/admin/user/handlers.ts', 'src/routes/admin/hotel/user/handlers.ts'])
+  assert.equal(data.cards[0].excerpts[0].lines, undefined) // 差分そのものは載せない
+  assert.match(data.cards[0].excerpts[0].link, /\/pull\/12\/files#diff-/)
   const html = renderPage(data, '<title>__PAGE_TITLE__</title><script type="application/json">/*__REVIEW_DATA__*/null</script>')
   assert.match(html, /<title>PR #12 認可を変える<\/title>/)
   assert.doesNotMatch(html, /<\/script><script>alert/)
