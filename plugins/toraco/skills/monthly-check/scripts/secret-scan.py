@@ -4,15 +4,19 @@
 使い方: python3 -I secret-scan.py <draft.md> [<secret-file> ...]
 
 1. <secret-file>（JSON / .env / PHP などの設定ファイル）から、秘密らしい値を集める
-   - JSON: キー名が secret / key / token / pass / mail / to / from / cc / bcc / user などを含む文字列値と、
-     キー名に関係なく「@」を含む文字列値
-   - それ以外: KEY=VALUE、'KEY' => 'VALUE'、define('KEY', 'VALUE') の形で、キー名が上と同じ条件の値
+   - JSON: キー名が secret / key / token / pass / pwd / mail / user / account / auth / credential / sitekey を
+     含む（部分一致）か、to / from / cc / bcc と一致する（完全一致。"token" や "stop" に誤って当たらないように）文字列値と、
+     キー名に関係なく「@」を含む文字列値（大文字小文字は区別しない）
+   - それ以外: KEY=VALUE、'KEY' => 'VALUE'、define('KEY', 'VALUE') の形で、キー名が上と同じ条件の値。
+     KEY=VALUE の形では、値は最初の空白・引用符・# の手前まで
    - 6 文字未満の値と、true / false / null などは照合しない
 2. 下書きの各行に、1 の値がそのまま含まれていないかを調べる
 3. 下書きの各行に、秘密らしい形（メールアドレス、reCAPTCHA / AWS / GitHub / Slack の鍵、秘密鍵のヘッダー）がないかを調べる
+   （設定ファイルを 1 つも渡さないときは、この検査だけを行う）
 
 出力: 一致した行番号と種類（ファイル名・キー名・パターン名）だけ。値は出さない。
-終了コード: 0 = 一致なし、1 = 一致あり（下書きを直して再実行する）、2 = 使い方の誤り
+終了コード: 0 = 一致なし、1 = 一致あり（下書きを直して再実行する）、
+           2 = 引数の誤り（下書きがない・読めない、渡した設定ファイルがない・読めない）。2 のときは検査をしていない
 """
 
 import json
@@ -85,15 +89,23 @@ def main(argv):
         print(__doc__.strip().splitlines()[2], file=sys.stderr)
         return 2
     draft = Path(argv[1])
-    lines = draft.read_text(encoding="utf-8", errors="replace").splitlines()
+    secret_files = [Path(f) for f in argv[2:]]
+    # 検査を一部しか行えない状態を「一致なし」にしないよう、先にすべてのファイルを確かめる
+    missing = [str(p) for p in [draft, *secret_files] if not p.is_file()]
+    if missing:
+        for f in missing:
+            print(f"エラー: {f} がない（検査していない）", file=sys.stderr)
+        return 2
+    try:
+        lines = draft.read_text(encoding="utf-8", errors="replace").splitlines()
+        collected = [(p, collect(p)) for p in secret_files]
+    except OSError as e:
+        # 例外の内容（パス）だけを出す。ファイルの中身は出さない
+        print(f"エラー: {e.filename} を読めない（検査していない）", file=sys.stderr)
+        return 2
     hits = []
     scanned = 0
-    for f in argv[2:]:
-        p = Path(f)
-        if not p.is_file():
-            print(f"skip: {f}（ファイルがない）")
-            continue
-        vals = collect(p)
+    for p, vals in collected:
         scanned += len(vals)
         for key, value in vals:
             for i, line in enumerate(lines, 1):
