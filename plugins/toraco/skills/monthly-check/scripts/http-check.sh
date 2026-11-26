@@ -31,12 +31,15 @@ while IFS=$'\t' read -r label target || [ -n "${label:-}" ]; do
   esac
   body="$out/pages/$n.html"
   headers="$out/pages/$n.headers"
+  # 区切りは US（\x1f）。TAB は IFS の空白扱いで、連続すると空のフィールドが詰められてしまう
+  sep=$'\x1f'
   meta=$(curl -sS -L --max-redirs 5 --max-time 30 -A "$ua" \
     -o "$body" -D "$headers" \
-    -w '%{http_code}\t%{url_effective}\t%{num_redirects}\t%{time_total}\t%{size_download}\t%{content_type}' \
-    "$url" 2>/dev/null) || meta=$'000\t\t0\t0\t0\t'
-  IFS=$'\t' read -r final_status final_url redirects seconds bytes ctype <<<"$meta"
-  first_status=$(grep -m1 -E '^HTTP/' "$headers" 2>/dev/null | awk '{print $2}')
+    -w "%{http_code}${sep}%{url_effective}${sep}%{num_redirects}${sep}%{time_total}${sep}%{size_download}${sep}%{content_type}" \
+    "$url" 2>/dev/null) || meta="000${sep}${sep}0${sep}0${sep}0${sep}"
+  IFS="$sep" read -r final_status final_url redirects seconds bytes ctype <<<"$meta"
+  # 接続できなかったときはヘッダーのファイルがない。set -e で止まらないよう、失敗を握りつぶす
+  first_status=$(grep -m1 -E '^HTTP/' "$headers" 2>/dev/null | awk '{print $2}' || true)
   [ -z "$first_status" ] && first_status="$final_status"
   jq -cn --argjson n "$n" --arg label "$label" --arg url "$url" \
     --arg first "$first_status" --arg final "$final_status" --arg final_url "$final_url" \
