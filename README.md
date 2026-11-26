@@ -32,6 +32,7 @@ claude-skills/
 | `land` | レビュー済み PR のマージ → マージ後 CI（デプロイ）監視 → 動作確認 → 関連 issue のクローズ |
 | `release` / `fix-ci` | リリース・CI 修復 |
 | `garden-deps` | 依存パッケージのガーデニング（Renovate の手動分・管轄外の棚卸しと一括更新）。`--majors=stack` で、ガーデニング PR の上に major を 1 パッケージ 1 PR の Stacked PRs として積む |
+| `monthly-check` | 保守サイトの月次チェック。各リポジトリの `docs/monthly-checklist.md` を読み、公開ページの HTTP / HTML 確認・`npm audit` / `composer audit`・Dependabot / 古いブランチ / 放置 PR の棚卸しを読み取り専用で行い、記録用テンプレートを埋めた月次報告の下書きを作る（投稿は人が行う） |
 
 ## 使い方
 
@@ -176,5 +177,5 @@ hook は plugin に入っているので、ローカルでもクラウドセッ�
 ```
 claude plugin validate .
 claude plugin marketplace add toraco/claude-skills && claude plugin install toraco@toraco-skills
-claude plugin details toraco   # Skills (18) と出れば OK
+claude plugin details toraco   # Skills (19) と出れば OK
 ```
