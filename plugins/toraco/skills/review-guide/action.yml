@@ -1,5 +1,5 @@
 name: Auto Viewed
-description: レビューガイドが「見なくてよい」としたファイルに、トークンの持ち主として Viewed を付ける
+description: レビューガイドが Viewed の対象（見なくてよい・流し読み）としたファイルに、トークンの持ち主として Viewed を付ける
 inputs:
   repo:
     description: 対象のリポジトリ（owner/name）

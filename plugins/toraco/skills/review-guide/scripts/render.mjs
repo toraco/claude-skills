@@ -15,6 +15,9 @@
 //     PR に投稿するコメントの本文を標準出力に出す。page-url を渡すと、ページへのリンクを入れて
 //     コメントを要約にする。渡さなければ、確かめることをすべてコメントに入れる
 //
+// Viewed を付けるのは「見なくてよい（skip）」と「流し読み（skim）」。どちらも、ガイドの説明で
+// 何をしているかが分かり、差分を開かなくてよいファイル。
+//
 // files.json は `GET /repos/{owner}/{repo}/pulls/{n}/files` の全ページをつないだ配列、
 // pr.json は `GET /repos/{owner}/{repo}/pulls/{n}` の結果。
 
@@ -35,9 +38,10 @@ export const CARD_KINDS = {
   unlisted: '本文に無い変更',
 }
 export const REQUIREMENT_STATUS = { ok: '対応あり', partial: '一部', missing: 'テストなし' }
+/** Viewed を付ける区分。ガイドを読めば、差分を開かなくてよいもの。 */
+export const VIEWED_SECTIONS = ['skip', 'skim']
 const MAX_CARDS = 7
 const EXCERPT_LINES = 40
-const COMMENT_EXCERPT_LINES = 16
 const COMMENT_CARDS_WITH_PAGE = 3
 const PAGE_URL_RE = /^https:\/\/claude\.ai\/(code\/)?artifact\/[\w-]+$/
 
@@ -157,12 +161,12 @@ export function validate(spec, files, { neverSkip = DEFAULT_NEVER_SKIP } = {}) {
       seen.set(entry.path, section)
       const needsNote = section === 'must' || section === 'skim' || section === 'skip'
       if (needsNote && !entry.note?.trim()) errors.push(`${section}: 説明（note）がありません: ${entry.path}`)
-      if (section === 'skip') {
+      if (VIEWED_SECTIONS.includes(section)) {
         const f = known.get(entry.path)
         const blocked =
           (matchesAny(entry.path, neverSkip) || (f?.previous_filename && matchesAny(f.previous_filename, neverSkip))) &&
           !(f && classifyFile(f, { neverSkip, files }).skip)
-        if (blocked) errors.push(`skip: 必ず見るパスなので「見なくてよい」に入れられません: ${entry.path}`)
+        if (blocked) errors.push(`${section}: 必ず見るパスなので「${SECTION_LABELS[section]}」（Viewed を付ける区分）に入れられません: ${entry.path}`)
       }
     }
   }
@@ -217,21 +221,13 @@ export function validate(spec, files, { neverSkip = DEFAULT_NEVER_SKIP } = {}) {
     if (r?.tests !== undefined && !(Array.isArray(r.tests) && r.tests.every(isNonEmptyString))) errors.push(`${at}.tests はテスト名の配列です`)
   }
 
-  // 差分の外の影響
-  for (const [i, o] of (spec.outside ?? []).entries()) {
-    if (!isNonEmptyString(o?.path) || !isNonEmptyString(o?.note) || !isLine(o?.line)) errors.push(`outside[${i}]: path と note は必須、line は 1 以上の行番号です`)
-    if (known.has(o?.path)) errors.push(`outside[${i}]: PR の変更ファイルは outside に入れません: ${o.path}`)
-    if (o?.from !== undefined && !known.has(o.from)) errors.push(`outside[${i}]: from は PR の変更ファイルです: ${o.from}`)
-  }
-
   // ファイルの関係図
   if (spec.map !== undefined) {
     const nodes = new Set()
-    const outside = new Set((spec.outside ?? []).map((o) => o?.path))
     for (const [i, layer] of (spec.map.layers ?? []).entries()) {
       if (!isNonEmptyString(layer?.name)) errors.push(`map.layers[${i}]: name がありません`)
       for (const p of layer?.paths ?? []) {
-        if (!known.has(p) && !outside.has(p)) errors.push(`map.layers[${i}]: 変更ファイルにも outside にも無いパスです: ${p}`)
+        if (!known.has(p)) errors.push(`map.layers[${i}]: PR の変更ファイルに無いパスです: ${p}`)
         if (nodes.has(p)) errors.push(`map: ${p} が 2 つの層にあります`)
         nodes.add(p)
       }
@@ -241,9 +237,6 @@ export function validate(spec, files, { neverSkip = DEFAULT_NEVER_SKIP } = {}) {
     }
   }
 
-  for (const [i, c] of (spec.checks ?? []).entries()) {
-    if (!isNonEmptyString(c?.title) || !isNonEmptyString(c?.steps)) errors.push(`checks[${i}]: title と steps は必須です`)
-  }
   return errors
 }
 
@@ -252,13 +245,13 @@ const stripGitmoji = (title) => title.replace(/^(:[\w+-]+:\s*)+/, '').trim()
 /** ページに埋め込むデータ。spec のパスを、表示名・リンク・差分の抜粋に解決する。 */
 export function buildPageData(spec, files, pr, { repo, generatedAt = new Date().toISOString() } = {}) {
   const byPath = new Map(files.map((f) => [f.filename, f]))
-  const names = shortNames([...new Set([...files.map((f) => f.filename), ...(spec.outside ?? []).map((o) => o.path)])])
+  const names = shortNames(files.map((f) => f.filename))
   const head = pr.head.sha
   const sectionOf = new Map()
   for (const s of SECTIONS) for (const e of spec[s]) sectionOf.set(e.path, { section: s, note: e.note?.trim() ?? '' })
   const link = (path, line) => (byPath.has(path) ? diffLink(repo, pr.number, path, line) : blobLink(repo, head, path, line))
   return {
-    version: 2,
+    version: 3,
     repo,
     number: pr.number,
     title: stripGitmoji(pr.title ?? ''),
@@ -276,6 +269,7 @@ export function buildPageData(spec, files, pr, { repo, generatedAt = new Date().
       additions: f.additions,
       deletions: f.deletions,
       ...sectionOf.get(f.filename),
+      viewed: VIEWED_SECTIONS.includes(sectionOf.get(f.filename)?.section),
       link: link(f.filename),
     })),
     cards: spec.cards.map((c, i) => ({
@@ -285,10 +279,10 @@ export function buildPageData(spec, files, pr, { repo, generatedAt = new Date().
       body: c.body.trim(),
       ...(c.before !== undefined ? { before: c.before, after: c.after } : {}),
       ...(c.alternatives ? { alternatives: c.alternatives } : {}),
+      // 差分そのものは載せず、根拠の場所へのリンクにする（コードは Files changed で読む）
       excerpts: (c.excerpts ?? []).map((ex) => {
-        const { lines, truncated } = excerpt(byPath.get(ex.path), ex)
-        const first = lines.find((l) => l.new)?.new
-        return { path: ex.path, name: names.get(ex.path), from: ex.from, to: ex.to, link: link(ex.path, ex.from ?? first), lines, truncated }
+        const first = excerpt(byPath.get(ex.path), ex).lines.find((l) => l.new)?.new
+        return { path: ex.path, name: names.get(ex.path), from: ex.from, to: ex.to, link: link(ex.path, ex.from ?? first) }
       }),
     })),
     requirements: (spec.requirements ?? []).map((r) => ({
@@ -304,16 +298,6 @@ export function buildPageData(spec, files, pr, { repo, generatedAt = new Date().
           edges: (spec.map.edges ?? []).map((e) => ({ from: e.from, to: e.to, label: e.label ?? '' })),
         }
       : null,
-    outsideChecked: spec.outsideChecked !== false,
-    outside: (spec.outside ?? []).map((o) => ({
-      path: o.path,
-      name: names.get(o.path),
-      line: o.line,
-      note: o.note,
-      from: o.from ?? null,
-      link: blobLink(repo, head, o.path, o.line),
-    })),
-    checks: (spec.checks ?? []).map((c) => ({ title: c.title, steps: c.steps })),
     testsNote: spec.testsNote?.trim() ?? '',
     skipNote: spec.skipNote?.trim() ?? '',
   }
@@ -330,15 +314,6 @@ export function renderPage(data, template = readFileSync(TEMPLATE, 'utf8')) {
   return template.replace('__PAGE_TITLE__', () => escapeHtml(title)).replace('/*__REVIEW_DATA__*/null', () => json)
 }
 
-/** 差分の行を、コメントに貼る ```diff のブロックにする。 */
-function diffBlock(lines, truncated) {
-  const body = lines.map((l) => (l.t === '@' ? '@@ … @@' : `${l.t}${l.text}`))
-  if (truncated) body.push('@@ … 続きは差分で @@')
-  let fence = '```'
-  while (body.some((l) => l.includes(fence))) fence += '`'
-  return [`${fence}diff`, ...body, fence].join('\n')
-}
-
 /** PR に投稿するコメントの本文。pageUrl があればページへの入口として短くする。 */
 export function renderComment(spec, files, pr, { repo, pageUrl, links = true } = {}) {
   if (pageUrl !== undefined && !PAGE_URL_RE.test(pageUrl)) throw new Error(`ページの URL が claude.ai の artifact ではありません: ${pageUrl}`)
@@ -351,7 +326,7 @@ export function renderComment(spec, files, pr, { repo, pageUrl, links = true } =
   const out = [GUIDE_MARKER, '## レビューガイド', '', `head \`${head}\` の ${files.length} ファイル。${data.summary}`, '']
   if (pageUrl) {
     out.push(
-      `[レビューページ](${pageUrl})に、ファイルの関係図、確かめること ${data.cards.length} 件、要件とテストの対応、動作確認の手順をまとめています。確認した項目には印を付けられます。`,
+      `[レビューページ](${pageUrl})に、ファイルの関係図、確かめること ${data.cards.length} 件、要件とテストの対応をまとめています。確認した項目には印を付けられます。`,
       '',
     )
   }
@@ -361,11 +336,12 @@ export function renderComment(spec, files, pr, { repo, pageUrl, links = true } =
     out.push(`**${i + 1}. ${card.title}**`, '', `${CARD_KINDS[card.kind]}。${card.body}`, '')
     if (card.before !== undefined) out.push(`- これまで: ${card.before}`, `- これから: ${card.after}`, '')
     if (card.alternatives) out.push(`- 選ばなかった案: ${card.alternatives}`, '')
-    for (const ex of card.excerpts) {
-      const range = ex.from ? `L${ex.from}${ex.to && ex.to !== ex.from ? `–${ex.to}` : ''}` : '差分'
-      const name = links ? `[\`${ex.name}\` ${range}](${ex.link})` : `\`${ex.name}\` ${range}`
-      const lines = ex.lines.slice(0, COMMENT_EXCERPT_LINES)
-      out.push(name, '', diffBlock(lines, ex.truncated || ex.lines.length > lines.length), '')
+    if (card.excerpts.length) {
+      const refs = card.excerpts.map((ex) => {
+        const range = ex.from ? `L${ex.from}${ex.to && ex.to !== ex.from ? `–${ex.to}` : ''}` : '差分'
+        return links ? `[\`${ex.name}\` ${range}](${ex.link})` : `\`${ex.name}\` ${range}`
+      })
+      out.push(`- 根拠の差分: ${refs.join('、')}`, '')
     }
   })
   if (pageUrl && data.cards.length > shown.length) {
@@ -377,22 +353,18 @@ export function renderComment(spec, files, pr, { repo, pageUrl, links = true } =
     const rows = pageUrl ? gaps : data.requirements
     if (rows.length) out.push(...rows.map((r) => `- ${r.status === 'ok' ? '✅' : '⚠️'} ${r.text}${r.status === 'ok' ? '' : `（${REQUIREMENT_STATUS[r.status]}）`}`), '')
   }
-  if (!pageUrl && data.outside.length) {
-    out.push('### 差分の外で影響を受ける箇所', '', ...data.outside.map((o) => `- [\`${o.name}\` L${o.line}](${o.link}): ${o.note}`), '')
-  }
-  if (!pageUrl && data.checks.length) {
-    out.push('### 動作確認の手順', '')
-    for (const c of data.checks) out.push(`**${c.title}**`, '', c.steps.trim(), '')
-  }
-  out.push(`### 見なくてよい（${spec.skip.length} 件、Viewed を付ける対象）`, '')
-  if (spec.skip.length) {
+  const viewed = VIEWED_SECTIONS.flatMap((s) => spec[s].map((e) => ({ ...e, section: s })))
+  out.push(`### Viewed を付けるファイル（${viewed.length} 件）`, '')
+  if (viewed.length) {
+    out.push('このガイドの説明で何をしているかが分かるので、差分を開かなくてよいファイルです。', '')
     if (data.skipNote) out.push(data.skipNote, '')
-    out.push(fold('ファイルと理由', spec.skip.map((e) => `- ${fileLabel(e.path)}: ${e.note.trim()}`)), '')
+    const rows = VIEWED_SECTIONS.flatMap((s) => spec[s].map((e) => `- ${SECTION_LABELS[s]}: ${fileLabel(e.path)}: ${e.note.trim()}`))
+    out.push(fold('ファイルと説明', rows), '')
   } else {
     out.push('なし', '')
   }
   out.push('仕分けと確かめることは Claude の判断で、機械的な検証はしていません。', '')
-  out.push(buildMarker({ head, paths: spec.skip.map((e) => e.path), ...(pageUrl ? { page: pageUrl } : {}) }))
+  out.push(buildMarker({ head, paths: viewed.map((e) => e.path), ...(pageUrl ? { page: pageUrl } : {}) }))
   return `${out.join('\n')}\n`
 }
 
@@ -407,8 +379,6 @@ export function proseFields(spec) {
   for (const [i, r] of (spec.requirements ?? []).entries()) for (const p of ['text', 'note']) add(`requirements.${i}.${p}`, r, p)
   for (const [i, l] of (spec.map?.layers ?? []).entries()) add(`map.layers.${i}.name`, l, 'name')
   for (const [i, e] of (spec.map?.edges ?? []).entries()) add(`map.edges.${i}.label`, e, 'label')
-  for (const [i, o] of (spec.outside ?? []).entries()) add(`outside.${i}.note`, o, 'note')
-  for (const [i, c] of (spec.checks ?? []).entries()) for (const p of ['title', 'steps']) add(`checks.${i}.${p}`, c, p)
   for (const section of SECTIONS) for (const [i, e] of (spec[section] ?? []).entries()) add(`${section}.${i}.note`, e, 'note')
   add('testsNote', spec, 'testsNote')
   add('skipNote', spec, 'skipNote')

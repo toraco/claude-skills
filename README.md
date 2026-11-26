@@ -28,7 +28,7 @@ claude-skills/
 | `make-plan` / `grilling` | 計画立案・壁打ち |
 | `file-issue` | issue 起票。実装タスクが複数の PR に分かれるなら、指示がなくても親 issue と sub-issues（1 issue 1 PR）に分けて起票し、`stack-issues` に渡せる形にする |
 | `stack-issues` | 親 issue の sub-issues を一括計画（確認は最初に 1 回）→ 実装 → revise → 1 issue 1 PR の Stacked PRs 作成 → auto-fix-review |
-| `review-guide` | セルフレビューの下準備。確かめること（差分の抜粋つき）・要件とテストの対応・ファイルの関係図・差分の外の影響・動作確認の手順を、スマホでも読めるレビューページ（Artifact）と PR のコメントにまとめ、見なくてよいファイルに Viewed を付ける。`--stack` で Stacked PRs をまとめて処理する（Viewed の仕組みは下の「review-guide の Viewed」を参照） |
+| `review-guide` | セルフレビューの下準備。確かめること（根拠の差分へのリンクつき）・要件とテストの対応・ファイルの関係図を、スマホでも読めるレビューページ（Artifact）と PR のコメントにまとめ、ガイドを読めば差分を開かなくてよいファイル（見なくてよい・流し読み）に Viewed を付ける。`--stack` で Stacked PRs をまとめて処理する（Viewed の仕組みは下の「review-guide の Viewed」を参照） |
 | `land` | レビュー済み PR のマージ → マージ後 CI（デプロイ）監視 → 動作確認 → 関連 issue のクローズ |
 | `release` / `fix-ci` | リリース・CI 修復 |
 | `garden-deps` | 依存パッケージのガーデニング（Renovate の手動分・管轄外の棚卸しと一括更新）。`--majors=stack` で、ガーデニング PR の上に major を 1 パッケージ 1 PR の Stacked PRs として積む |
@@ -118,12 +118,12 @@ set -e
 
 ## review-guide の Viewed
 
-`review-guide` は、ガイドの「見なくてよい」に挙げたファイルに、レビューする本人として Viewed を付ける。Viewed は GitHub の GraphQL API（`markFileAsViewed`）でしか付けられないので、実行する場所で手段が分かれる。
+`review-guide` は、ガイドの「見なくてよい」と「流し読み」に挙げたファイル（ガイドの説明で何をしているかが分かり、差分を開かなくてよいもの）に、レビューする本人として Viewed を付ける。Viewed は GitHub の GraphQL API（`markFileAsViewed`）でしか付けられないので、実行する場所で手段が分かれる。
 
 | 実行する場所 | 手段 |
 |---|---|
 | ローカル（`gh` で GraphQL が使える） | skill が `scripts/apply.mjs` を `gh auth token` のトークンで直接実行する |
-| クラウドセッション（GraphQL が使えない） | skill が、PAT を置いたリポジトリの workflow を `workflow_dispatch` で起動する |
+| クラウドセッション（GraphQL が使えない） | skill が、PAT を置いたリポジトリ（runner）を `add_repo` でセッションに追加し、その workflow を `workflow_dispatch` で起動する |
 
 クラウドから使うには、workflow と PAT を置くリポジトリ（runner）を用意する。toraco では private の `toraco/dotclaude` に置いている（設定の手順はそのリポジトリの `auto-viewed/README.md`）。workflow は、この skill のディレクトリを composite action として呼ぶ:
 
